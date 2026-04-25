@@ -1,0 +1,41 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "C:\\Users\\navee\\Post-Quantum-Blockchain-Federated-Learning-for-Healthcare-Applications\\pqbfl_project\\chain\\contracts\\PQBFL.sol": {
+      "lastModificationDate": 1777094047458,
+      "contentHash": "29a725c4cb8098a814c76af12d3a5148",
+      "sourceName": "contracts/PQBFL.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "optimizer": {
+            "enabled": true,
+            "runs": 200
+          },
+          "evmVersion": "paris",
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "PQBFL"
+      ]
+    }
+  }
+}
