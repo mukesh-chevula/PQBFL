@@ -22,7 +22,7 @@ from pqbfl.chain.contract_client import PQBFLContractClient, load_hardhat_artifa
 from pqbfl.chain.hardhat_accounts import derive_hardhat_account
 from pqbfl.crypto.eddsa import ed25519_verify
 from pqbfl.fl.aggregator import coord_median, fedavg, trimmed_mean
-from pqbfl.fl.data import make_synthetic_federated_binary
+from pqbfl.fl.data import load_and_preprocess_dataset
 from pqbfl.fl.model import LogisticModel, accuracy
 from pqbfl.protocol import (
     client_finish_session,
@@ -64,6 +64,7 @@ class DemoConfig:
     sim_seed: int = 123
     participation_rate: float = 1.0  # 1.0 means all clients participate every round
     label_flip_prob: float = 0.0     # 0.0 means no poisoning
+    dataset_type: str = "synthetic"  # "synthetic" or "real"
 
     # Aggregation
     aggregator: str = "fedavg"       # fedavg | median | trimmed_mean
@@ -225,17 +226,39 @@ def run_demo(cfg: DemoConfig) -> DemoResult:
         }
     )
 
-    # FL setup
-    d = 10
-    dataset = make_synthetic_federated_binary(
-        n_clients=len(client_accts),
-        n_train_per_client=400,
-        n_test=800,
-        d=d,
-        seed=int(cfg.data_seed),
-        non_iid=bool(cfg.non_iid),
-    )
-    global_model = LogisticModel.init(d=d, seed=int(cfg.model_seed))
+    if cfg.dataset_type == "real":
+        csv_path = "/Users/mchevula/PQBFL/part-00000-363d1ba3-8ab5-4f96-bc25-4d5862db7cb9-c000.csv"
+        dataset = load_and_preprocess_dataset(
+            csv_path=csv_path,
+            n_clients=len(client_accts),
+            seed=int(cfg.data_seed)
+        )
+    else:
+        from sklearn.datasets import make_classification
+        from pqbfl.fl.data import ClientDataset, FederatedDataset
+        
+        n_samples = 1000
+        x, y = make_classification(
+            n_samples=n_samples,
+            n_features=20,
+            n_informative=15,
+            n_redundant=5,
+            random_state=cfg.data_seed,
+        )
+        x_train, x_test = x[:800], x[800:]
+        y_train, y_test = y[:800], y[800:]
+
+        # Split train data among clients
+        c_size = 800 // len(client_accts)
+        clients = []
+        for i in range(len(client_accts)):
+            start = i * c_size
+            end = start + c_size
+            clients.append(ClientDataset(x=x_train[start:end], y=y_train[start:end]))
+        dataset = FederatedDataset(clients=clients, x_test=x_test, y_test=y_test)
+        
+    d = dataset.x_test.shape[1]
+    global_model = LogisticModel.init(d, seed=int(cfg.model_seed))
 
     rng_sim = np.random.default_rng(int(cfg.sim_seed))
 

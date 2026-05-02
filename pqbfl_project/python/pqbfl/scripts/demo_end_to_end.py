@@ -18,7 +18,7 @@ from pqbfl.chain.contract_client import PQBFLContractClient, load_hardhat_artifa
 from pqbfl.chain.hardhat_accounts import derive_hardhat_account
 from pqbfl.crypto.ethsig import recover_signer, sign_bytes
 from pqbfl.fl.aggregator import fedavg
-from pqbfl.fl.data import make_synthetic_federated_binary
+from pqbfl.fl.data import ClientDataset, FederatedDataset
 from pqbfl.fl.model import LogisticModel, accuracy
 from pqbfl.protocol import (
     client_finish_session,
@@ -44,6 +44,7 @@ class DemoConfig:
     n_clients: int = 2
     L_j: int = 3
     project_id: int = 1
+    dataset_type: str = "synthetic"
 
 
 @dataclass(frozen=True)
@@ -162,16 +163,38 @@ def run_demo(cfg: DemoConfig) -> DemoResult:
         "gas_used": 0,
     })
 
-    # FL setup
-    d = 10
-    dataset = make_synthetic_federated_binary(
-        n_clients=len(client_accts),
-        n_train_per_client=400,
-        n_test=800,
-        d=d,
-        seed=42,
-        non_iid=True,
-    )
+    if cfg.dataset_type == "real":
+        from pqbfl.fl.data import load_and_preprocess_dataset
+        csv_path = "/Users/mchevula/PQBFL/part-00000-363d1ba3-8ab5-4f96-bc25-4d5862db7cb9-c000.csv"
+        dataset = load_and_preprocess_dataset(
+            csv_path=csv_path,
+            n_clients=len(client_accts),
+            seed=42
+        )
+        d = dataset.x_test.shape[1]
+    else:
+        from sklearn.datasets import make_classification
+        from pqbfl.fl.data import ClientDataset, FederatedDataset
+        
+        n_samples = 1000
+        x, y = make_classification(
+            n_samples=n_samples,
+            n_features=20,
+            n_informative=15,
+            n_redundant=5,
+            random_state=42,
+        )
+        x_train, x_test = x[:800], x[800:]
+        y_train, y_test = y[:800], y[800:]
+
+        c_size = 800 // len(client_accts)
+        clients = []
+        for i in range(len(client_accts)):
+            start = i * c_size
+            end = start + c_size
+            clients.append(ClientDataset(x=x_train[start:end], y=y_train[start:end]))
+        dataset = FederatedDataset(clients=clients, x_test=x_test, y_test=y_test)
+        d = dataset.x_test.shape[1]
     global_model = LogisticModel.init(d=d, seed=0)
 
     id_p = int(cfg.project_id)

@@ -193,6 +193,11 @@ def main():
         clients = st.number_input("Clients", min_value=1, max_value=10, value=int(os.getenv("PQBFL_CLIENTS", "2")))
         L_j = st.number_input("L_j (symmetric ratchet window)", min_value=1, max_value=50, value=int(os.getenv("PQBFL_LJ", "3")))
         project_id = st.number_input("Project ID", min_value=1, max_value=1_000_000, value=int(os.getenv("PQBFL_PROJECT_ID", "1")))
+        
+        st.divider()
+        st.subheader("📊 Dataset")
+        dataset_type = st.radio("Dataset Type", ["Synthetic", "Real"], index=0, help="Choose the data source for FL training")
+        
         st.divider()
 
         st.subheader("Chain")
@@ -222,6 +227,7 @@ def main():
             n_clients=int(clients),
             L_j=int(L_j),
             project_id=int(project_id),
+            dataset_type=dataset_type.lower(),
         )
         with st.spinner("Running PQBFL demo..."):
             st.session_state.last_result = run_demo(cfg)

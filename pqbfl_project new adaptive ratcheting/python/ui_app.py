@@ -305,6 +305,10 @@ def main():
         rounds = st.number_input("Rounds", min_value=1, max_value=50, value=int(os.getenv("PQBFL_ROUNDS", "10")))
         clients = st.number_input("Clients", min_value=1, max_value=10, value=int(os.getenv("PQBFL_CLIENTS", "2")))
         project_id = st.number_input("Project ID", min_value=1, max_value=1_000_000, value=int(os.getenv("PQBFL_PROJECT_ID", "1")))
+        
+        st.divider()
+        st.subheader("📊 Dataset")
+        dataset_type = st.radio("Dataset Type", ["Synthetic", "Real"], index=0, help="Choose the data source for FL training")
 
         st.divider()
         st.subheader("🔄 Adaptive Ratcheting")
@@ -378,6 +382,7 @@ def main():
                 L_max=int(L_max),
                 L_default=int(L_default),
                 sensitivity=float(sensitivity),
+                dataset_type=dataset_type.lower(),
             )
             with st.spinner("Running adaptive ratcheting PQBFL demo..."):
                 st.session_state.last_result = run_demo(cfg)

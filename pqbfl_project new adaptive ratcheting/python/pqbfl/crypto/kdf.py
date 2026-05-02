@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 
 def _kdf_hashmod():
-    """Return a hashlib-like module for HMAC (BLAKE3-256 preferred)."""
+    """Return a hashlib-like constructor for HMAC (BLAKE3-256 preferred)."""
 
     try:
         from blake3 import blake3  # type: ignore
@@ -43,7 +43,8 @@ def hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
     if length <= 0:
         raise ValueError("length must be > 0")
 
-    hash_len = _kdf_hashmod().digest_size
+    mod = _kdf_hashmod()
+    hash_len = mod().digest_size if hasattr(mod, '__call__') else mod.digest_size
     n = (length + hash_len - 1) // hash_len
     if n > 255:
         raise ValueError("length too large")

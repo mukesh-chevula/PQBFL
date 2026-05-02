@@ -42,6 +42,9 @@ class LogisticModel:
     ):
         rng = np.random.default_rng(seed)
         n = x.shape[0]
+        
+        print(f"      [LogisticModel] Fast SGD training on {n} samples for {epochs} epochs...")
+        
         for _ in range(epochs):
             idx = rng.permutation(n)
             for start in range(0, n, batch_size):
