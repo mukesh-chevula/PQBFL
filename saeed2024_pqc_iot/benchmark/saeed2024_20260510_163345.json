@@ -1,0 +1,111 @@
+{
+  "config": {
+    "n_samples": 500,
+    "attack_frac": 0.25,
+    "n_devices": 2,
+    "window_size": 20
+  },
+  "leakage": {
+    "cv_vulnerable": 0.184214,
+    "cv_hardened": 0.030683,
+    "leakage_reduction": 0.8334,
+    "leakage_reduction_pct": 83.34
+  },
+  "pqc": {
+    "backend": "ml_kem_768",
+    "pk_bytes": 1184,
+    "avg_encap_ms": 0.0359
+  },
+  "detector_vulnerable": {
+    "accuracy": 0.72,
+    "f1": 0.5882,
+    "auc_roc": 0.8767,
+    "precision": 0.7143,
+    "recall": 0.5,
+    "fpr": 0.1333,
+    "fnr": 0.5,
+    "confusion": [
+      [
+        13,
+        2
+      ],
+      [
+        5,
+        5
+      ]
+    ],
+    "n_train": 74,
+    "n_test": 25,
+    "top_features": [
+      [
+        "p25",
+        0.2599
+      ],
+      [
+        "mean_us",
+        0.1138
+      ],
+      [
+        "kurtosis",
+        0.0994
+      ],
+      [
+        "entropy_bits",
+        0.0783
+      ],
+      [
+        "cv",
+        0.0733
+      ]
+    ]
+  },
+  "detector_hardened": {
+    "accuracy": 0.72,
+    "f1": 0.3636,
+    "auc_roc": 0.5521,
+    "precision": 1.0,
+    "recall": 0.2222,
+    "fpr": 0.0,
+    "fnr": 0.7778,
+    "confusion": [
+      [
+        16,
+        0
+      ],
+      [
+        7,
+        2
+      ]
+    ],
+    "n_train": 74,
+    "n_test": 25,
+    "top_features": [
+      [
+        "min_us",
+        0.1032
+      ],
+      [
+        "autocorr_lag1",
+        0.0911
+      ],
+      [
+        "cv",
+        0.0897
+      ],
+      [
+        "range_us",
+        0.0877
+      ],
+      [
+        "kurtosis",
+        0.0843
+      ]
+    ]
+  },
+  "timing_summary": {
+    "vuln_mean_us": 363.68,
+    "vuln_std_us": 67.0,
+    "hard_mean_us": 100.09,
+    "hard_std_us": 3.07
+  }
+}
