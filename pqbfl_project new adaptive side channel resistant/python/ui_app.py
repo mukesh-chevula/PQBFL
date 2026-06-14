@@ -713,8 +713,8 @@ A large L_j means fewer key exchanges (better performance, weaker security).
 
 1. **ThreatMonitor** collects security events (failed signatures, hash mismatches, timing anomalies)
 2. Events decay exponentially over a sliding time window (older events matter less)
-3. **AdaptiveRatchetPolicy** maps the composite threat level to L_j using a power curve:
-   - `L_j = L_max - (L_max - L_min) × threat^sensitivity`
+3. **AdaptiveRatchetPolicy** maps the composite threat level to L_j using joint security-cost optimization:
+   - `L_j* = sqrt( N * (beta * C_kem + gamma * E_kem) / (alpha * Theta_epsilon(t)) )` bounded to `[L_min, L_max]`
 4. When threat is high → L_j drops → more frequent ratchets → stronger security
 5. When threat subsides → L_j rises → fewer ratchets → better performance
 

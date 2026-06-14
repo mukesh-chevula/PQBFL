@@ -43,7 +43,7 @@ def hkdf_expand(prk: bytes, info: bytes, length: int) -> bytes:
     if length <= 0:
         raise ValueError("length must be > 0")
 
-    hash_len = _kdf_hashmod().digest_size
+    hash_len = _kdf_hashmod()().digest_size
     n = (length + hash_len - 1) // hash_len
     if n > 255:
         raise ValueError("length too large")

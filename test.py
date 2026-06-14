@@ -1,80 +1,84 @@
 """
-benchmark_zero_threat.py
-========================
-Performance comparison: Constant-L_j PQBFL (baseline) vs
-Adaptive-Ratchet PQBFL under a ZERO-THREAT scenario.
+compare_all_variants.py
+=======================
+Runs all five PQBFL project variants against a shared Hardhat node and
+produces side-by-side comparison graphs on the same axes:
 
-Zero-threat behaviour
----------------------
-* ThreatMonitor() sees no security events → threat_level = 0.0 always.
-* AdaptiveRatchetPolicy.compute_L_j(0.0) = L_max  (maximum window).
-* Asymmetric (expensive PQ) ratchet fires only every L_max rounds.
-* Constant-L_j baseline fires every CONSTANT_L_J rounds (smaller = more overhead).
+  Variants
+  --------
+  V1  pqbfl_project                            (baseline, original)
+  V2  pqbfl_project new                        (baseline, new chain layer)
+  V3  pqbfl_project adaptive ratcheting        (adaptive ratcheting, old)
+  V4  pqbfl_project new adaptive ratcheting    (adaptive ratcheting, new)
+  V5  pqbfl_project new adaptive side channel  (adaptive + SC-resistant)
 
-Graphs produced (light theme)
-----------------------------
-1. L_j over FL rounds  — adaptive stays at L_max; constant fixed at L_j
-2. L_j vs threat level — theoretical mapping curve + zero-threat marker
-3. Timing comparison   — total latency + cumulative overhead side-by-side
+  Graphs produced
+  ---------------
+  G1  Accuracy over rounds          — all 5 on same axes
+  G2  Per-round transaction time    — all 5 on same axes
+  G3  Per-round off-chain op time   — all 5 on same axes
+  G4  Cumulative total time         — all 5 on same axes
+  G5  Key-metrics bar chart         — avg tx time, avg op time, final acc
 """
 from __future__ import annotations
 
-import sys
+import importlib
 import os
-import time
+import sys
+import types
 import warnings
+from pathlib import Path
 
-warnings.filterwarnings("ignore", category=RuntimeWarning)
-
-# ── path setup ────────────────────────────────────────────────────────────────
-_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_PYTHON_DIR = os.path.join(_SCRIPT_DIR, "pqbfl_project adaptive ratcheting", "python")
-if _PYTHON_DIR not in sys.path:
-    sys.path.insert(0, _PYTHON_DIR)
-
-# ── third-party / project imports ────────────────────────────────────────────
-import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.gridspec import GridSpec
-from matplotlib.lines import Line2D
+import numpy as np
 
-from pqbfl.protocol import (
-    server_generate_keys, client_generate_keys,
-    server_send_pubkeys, client_process_server_pubkeys,
-    client_send_epk_and_ct, server_finish_session, client_finish_session,
-    session_from_root, update_L_j, get_effective_L_j, should_asymmetric_ratchet,
-    next_model_key, encrypt_round_message, decrypt_round_message,
-)
-from pqbfl.fl.model import LogisticModel, accuracy
-from pqbfl.fl.aggregator import fedavg
-from pqbfl.fl.data import make_synthetic_federated_binary
-from pqbfl.adaptive.adaptive_ratchet import AdaptiveRatchetPolicy
-from pqbfl.adaptive.threat_monitor import ThreatMonitor
+warnings.filterwarnings("ignore")
 
-# ── config ────────────────────────────────────────────────────────────────────
-N_ROUNDS       = 40
-N_CLIENTS      = 4
-N_TRAIN        = 200
-N_TEST         = 500
-D              = 10
-CONSTANT_L_J   = 10          # baseline: asymmetric ratchet every 10 rounds
-ADAPTIVE_L_MIN = 2
-ADAPTIVE_L_MAX = 20           # zero-threat: asymmetric ratchet every 20 rounds
-ADAPTIVE_L_DEF = 10
-SEED           = 42
+# ── paths ─────────────────────────────────────────────────────────────────────
+ROOT = Path(__file__).resolve().parent
 
-OUTPUT_DIR = os.path.join(_SCRIPT_DIR, "benchmark_results")
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+VARIANTS: list[dict] = [
+    {
+        "key":   "v1",
+        "label": "V1 · Baseline (orig)",
+        "dir":   ROOT / "pqbfl_project",
+    },
+    {
+        "key":   "v2",
+        "label": "V2 · Baseline (new)",
+        "dir":   ROOT / "pqbfl_project new",
+    },
+    {
+        "key":   "v3",
+        "label": "V3 · Adaptive Ratchet (orig)",
+        "dir":   ROOT / "pqbfl_project adaptive ratcheting",
+    },
+    {
+        "key":   "v4",
+        "label": "V4 · Adaptive Ratchet (new)",
+        "dir":   ROOT / "pqbfl_project new adaptive ratcheting",
+    },
+    {
+        "key":   "v5",
+        "label": "V5 · Adaptive + SC-Resistant",
+        "dir":   ROOT / "pqbfl_project new adaptive side channel resistant",
+    },
+]
 
-# ── light theme palette ───────────────────────────────────────────────────────
-C_CONST   = "#1F6FEB"    # strong blue   – baseline
-C_ADAPT   = "#0D9E6E"    # vivid green   – adaptive (winner)
-C_THREAT  = "#D04F00"    # burnt orange  – threat curve
-C_RATCHET = "#CC2222"    # red spike     – asymmetric ratchet events
-C_WIN_BG  = "#E8F5EE"    # light green bg for "better" regions
+# Shared run settings
+CHAIN_URL  = os.getenv("PQBFL_CHAIN_URL", "http://127.0.0.1:8545")
+ROUNDS     = 50
+N_CLIENTS  = 10
+
+OUTPUT_DIR = ROOT / "benchmark_results" / "all_variants"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+# ── palette ───────────────────────────────────────────────────────────────────
+COLORS = ["#1F6FEB", "#0D9E6E", "#D04F00", "#8B44EB", "#CC2222"]
+MARKERS = ["o", "s", "^", "D", "v"]
+
 C_BG      = "#FFFFFF"
 C_AX      = "#F5F7FA"
 C_GRID    = "#D0D7E3"
@@ -104,590 +108,343 @@ plt.rcParams.update({
     "ytick.labelsize":   9,
 })
 
-# ── credentials (test keys) ───────────────────────────────────────────────────
-_SIG_PRIV = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-_SIG_ADDR = "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-_CLI_PRIV = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d"
-_CLI_ADDR = "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
 
+# ── dynamic import helper ─────────────────────────────────────────────────────
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Session helper
-# ─────────────────────────────────────────────────────────────────────────────
+def _load_demo(variant: dict):
+    """
+    Import `pqbfl.scripts.demo_end_to_end` from the variant's python/ dir.
+    Registers the module in sys.modules BEFORE exec_module so that
+    @dataclass can find cls.__module__ during decoration.
+    """
+    python_dir = str(variant["dir"] / "python")
+    key = variant["key"]
+    mod_name = f"demo_{key}"
 
-def _do_session_setup() -> tuple[bytes, bytes, float]:
-    """Full 3-way PQ handshake → (server_root, client_root, elapsed_s)."""
-    from pqbfl.utils import sha256
-    t0 = time.perf_counter()
-    server = server_generate_keys(_SIG_PRIV, _SIG_ADDR)
-    client = client_generate_keys(_CLI_PRIV, _CLI_ADDR)
-    tx_r   = {"block": 1, "hash": "0x" + "ab" * 32}
-    id_p   = 1
+    # Temporarily prepend variant's python dir so its imports resolve correctly.
+    sys.path.insert(0, python_dir)
 
-    server_pub = server_send_pubkeys(server, tx_r=tx_r, id_p=id_p)
-    kpk_b = server_pub.payload["kpk_b"]
-    epk_b = server_pub.payload["epk_b"]
-    h_pks = sha256(kpk_b + epk_b)
+    # Purge any previously cached pqbfl modules to avoid cross-variant bleed.
+    to_del = [m for m in sys.modules if m == "pqbfl" or m.startswith("pqbfl.")]
+    for m in to_del:
+        del sys.modules[m]
 
-    encap = client_process_server_pubkeys(
-        client, server_sig_addr=_SIG_ADDR, signed=server_pub,
-        expected_h_pks=h_pks,
+    spec = importlib.util.spec_from_file_location(
+        mod_name,
+        python_dir + "/pqbfl/scripts/demo_end_to_end.py",
     )
-    h_epk_a   = sha256(client.ecdh.public_key_bytes)
-    client_msg = client_send_epk_and_ct(client, tx_r=tx_r, id_p=id_p, ct=encap.ciphertext)
-    server_root = server_finish_session(
-        server, client_sig_addr=_CLI_ADDR, signed=client_msg,
-        expected_h_epk_a=h_epk_a,
-    )
-    client_root = client_finish_session(client, server_pub=server_pub, encap=encap)
-    return server_root, client_root, time.perf_counter() - t0
+    mod = importlib.util.module_from_spec(spec)
+    # MUST register before exec_module so @dataclass can resolve cls.__module__
+    sys.modules[mod_name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        # Clean up: remove variant path and the temp module name
+        try:
+            sys.path.remove(python_dir)
+        except ValueError:
+            pass
+        sys.modules.pop(mod_name, None)
+
+    return mod
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Simulation
-# ─────────────────────────────────────────────────────────────────────────────
+# ── run all variants ──────────────────────────────────────────────────────────
 
-def run_simulation(*, use_adaptive: bool, data, n_rounds: int = N_ROUNDS) -> dict:
-    label = "ADAPTIVE (zero-threat)" if use_adaptive else f"CONSTANT L_j={CONSTANT_L_J}"
-    print(f"\n{'='*56}\n  Variant: {label}\n{'='*56}")
+def run_all() -> list[dict]:
+    results = []
+    for v in VARIANTS:
+        print(f"\n{'='*60}")
+        print(f"  Running {v['label']}")
+        print(f"{'='*60}")
+        try:
+            demo = _load_demo(v)
+            # Build config — only pass fields DemoConfig actually accepts
+            import inspect
+            cfg_fields = {f for f in inspect.signature(demo.DemoConfig).parameters}
+            cfg_kwargs = {}
+            if "chain_url"  in cfg_fields: cfg_kwargs["chain_url"]  = CHAIN_URL
+            if "rounds"     in cfg_fields: cfg_kwargs["rounds"]     = ROUNDS
+            if "n_clients"  in cfg_fields: cfg_kwargs["n_clients"]  = N_CLIENTS
 
-    server_root, client_root, setup_time = _do_session_setup()
-    L_j_init = ADAPTIVE_L_DEF if use_adaptive else CONSTANT_L_J
-    s_state  = session_from_root(server_root, L_j=L_j_init)
-    c_state  = session_from_root(client_root, L_j=L_j_init)
-
-    policy  = AdaptiveRatchetPolicy(
-        L_min=ADAPTIVE_L_MIN, L_max=ADAPTIVE_L_MAX, L_default=ADAPTIVE_L_DEF,
-    ) if use_adaptive else None
-    monitor = ThreatMonitor() if use_adaptive else None
-
-    global_model = LogisticModel.init(D, seed=SEED)
-
-    rounds, lj_values, threat_levels, asym_ratchet_at = [], [], [], []
-    time_session, time_sym_ratchet = [], []
-    time_encrypt, time_decrypt, time_fl, time_total = [], [], [], []
-    accuracies = []
-
-    for rnd in range(1, n_rounds + 1):
-        t_round = time.perf_counter()
-
-        # ── threat level: always 0.0 (zero-threat scenario) ──────
-        threat_level = 0.0
-        if use_adaptive and monitor is not None:
-            threat_level = monitor.get_threat_level()
-
-        # ── adaptive L_j update ───────────────────────────────────
-        if use_adaptive and policy is not None:
-            new_lj = policy.evaluate(threat_level, round_num=rnd,
-                                     reason=f"rnd {rnd}: threat={threat_level:.4f}")
-            update_L_j(s_state, new_lj)
-            update_L_j(c_state, new_lj)
-
-        effective_lj = get_effective_L_j(s_state)
-
-        # ── asymmetric ratchet (PQ key re-gen) check ─────────────
-        t_sess = time.perf_counter()
-        if should_asymmetric_ratchet(s_state):
-            sr2, cr2, _ = _do_session_setup()
-            s_state = session_from_root(sr2, L_j=effective_lj)
-            c_state = session_from_root(cr2, L_j=effective_lj)
-            if use_adaptive and policy is not None:
-                update_L_j(s_state, effective_lj)
-                update_L_j(c_state, effective_lj)
-            asym_ratchet_at.append(rnd)
-            print(f"  Round {rnd:3d}: ⚡ ASYMMETRIC RATCHET (L_j={effective_lj})")
-        t_sess = time.perf_counter() - t_sess
-
-        # ── symmetric ratchet ─────────────────────────────────────
-        t_sym = time.perf_counter()
-        s_state, s_key = next_model_key(s_state)
-        c_state, c_key = next_model_key(c_state)
-        t_sym = time.perf_counter() - t_sym
-
-        # ── FL training ───────────────────────────────────────────
-        t_fl = time.perf_counter()
-        trained = []
-        for k, cd in enumerate(data.clients):
-            local = global_model.copy()
-            local.train_sgd(cd.x, cd.y, lr=0.05, epochs=2, seed=SEED + rnd + k)
-            trained.append((local, len(cd.x)))
-        t_fl = time.perf_counter() - t_fl
-
-        agg     = fedavg(trained)
-        payload = {"w": agg.w.tolist(), "b": float(agg.b)}
-
-        # ── encrypt / decrypt ─────────────────────────────────────
-        t_enc = time.perf_counter()
-        ct = encrypt_round_message(s_key, round_num=rnd, direction="s2c", payload=payload)
-        t_enc = time.perf_counter() - t_enc
-
-        t_dec = time.perf_counter()
-        dec = decrypt_round_message(c_key, round_num=rnd, direction="s2c", ciphertext=ct)
-        t_dec = time.perf_counter() - t_dec
-
-        import json
-        global_model.w = np.array(dec["w"], dtype=np.float64)
-        global_model.b = float(dec["b"])
-        acc = accuracy(global_model, data.x_test, data.y_test)
-        t_total_val = time.perf_counter() - t_round
-
-        rounds.append(rnd);           lj_values.append(effective_lj)
-        threat_levels.append(threat_level)
-        time_session.append(t_sess);  time_sym_ratchet.append(t_sym)
-        time_encrypt.append(t_enc);   time_decrypt.append(t_dec)
-        time_fl.append(t_fl);         time_total.append(t_total_val)
-        accuracies.append(acc)
-
-        print(f"  Round {rnd:3d}: L_j={effective_lj:2d}  threat={threat_level:.3f}"
-              f"  acc={acc:.3f}  {t_total_val*1000:.2f}ms")
-
-    return dict(variant="adaptive" if use_adaptive else "constant",
-                rounds=rounds, lj_values=lj_values, threat_levels=threat_levels,
-                asym_ratchet_at=asym_ratchet_at, time_session=time_session,
-                time_sym_ratchet=time_sym_ratchet, time_encrypt=time_encrypt,
-                time_decrypt=time_decrypt, time_fl=time_fl,
-                time_total=time_total, accuracies=accuracies,
-                setup_time=setup_time)
+            cfg = demo.DemoConfig(**cfg_kwargs)
+            result = demo.run_demo(cfg)
+            results.append({"variant": v, "result": result, "error": None})
+            print(f"  ✅ Done — final acc={result.final_accuracy:.4f}")
+        except Exception as exc:
+            import traceback
+            print(f"  ❌ FAILED: {exc}")
+            traceback.print_exc()
+            results.append({"variant": v, "result": None, "error": str(exc)})
+    return results
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Utility
-# ─────────────────────────────────────────────────────────────────────────────
+# ── helper ────────────────────────────────────────────────────────────────────
 
-def ms(arr): return [v * 1000 for v in arr]
-
-
-def _badge(ax, text, xy, color, fontsize=9):
-    """Draw a pill-shaped annotation badge."""
-    ax.annotate(text, xy=xy, fontsize=fontsize, fontweight="bold",
-                color="white", ha="center", va="center",
-                bbox=dict(boxstyle="round,pad=0.35", facecolor=color,
-                          edgecolor="none", alpha=0.92))
+def _ms(arr: list[float]) -> list[float]:
+    return [v * 1000 for v in arr] if arr and isinstance(arr[0], float) and arr[0] < 1 else list(arr)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Graph 1 — L_j over rounds
-# ─────────────────────────────────────────────────────────────────────────────
+def _get(result, attr, default=None):
+    return getattr(result, attr, default)
 
-def plot_lj_over_rounds(const_r, adapt_r, out_path: str):
-    fig, ax = plt.subplots(figsize=(13, 5.5))
+
+# ── Graph 1 — Accuracy over rounds ───────────────────────────────────────────
+
+def plot_accuracy(runs: list[dict]):
+    fig, ax = plt.subplots(figsize=(13, 6))
     fig.patch.set_facecolor(C_BG)
-
-    # Title
-    fig.text(0.5, 0.97,
-             "Graph 1 — Ratcheting Window (L_j) Over FL Rounds",
+    fig.text(0.5, 0.97, "Graph 1 — Model Accuracy Over FL Rounds",
              ha="center", va="top", fontsize=14, fontweight="bold", color=C_TEXT)
-    fig.text(0.5, 0.91,
-             "Zero-Threat Scenario  ·  Adaptive PQBFL keeps L_j at maximum (L_max = 20)  ·  "
-             "Fewer asymmetric ratchets = lower overhead",
+    fig.text(0.5, 0.92, f"All 5 PQBFL variants  ·  {ROUNDS} rounds  ·  {N_CLIENTS} clients",
              ha="center", va="top", fontsize=9.5, color=C_SUBTEXT)
 
-    rounds = const_r["rounds"]
+    for i, run in enumerate(runs):
+        if run["result"] is None:
+            continue
+        r = run["result"]
+        v = run["variant"]
+        accs = r.round_accuracies
+        xs = list(range(len(accs)))
+        ax.plot(xs, accs, color=COLORS[i], marker=MARKERS[i],
+                lw=2.2, markersize=5, label=v["label"])
 
-    # Green "advantage zone" between the two lines
-    ax.fill_between(rounds,
-                    const_r["lj_values"], adapt_r["lj_values"],
-                    alpha=0.12, color=C_ADAPT, label="_nolegend_")
-
-    # Lines
-    ax.step(rounds, const_r["lj_values"], where="post",
-            color=C_CONST, lw=2.5,
-            label=f"Baseline PQBFL — Constant L_j = {CONSTANT_L_J}")
-    ax.step(rounds, adapt_r["lj_values"], where="post",
-            color=C_ADAPT, lw=2.8, linestyle="-",
-            label=f"Adaptive PQBFL — Zero-threat → L_j = {ADAPTIVE_L_MAX}  ✓ BETTER")
-
-    # Asymmetric ratchet verticals
-    for i, rnd in enumerate(const_r["asym_ratchet_at"]):
-        ax.axvline(rnd, color=C_RATCHET, alpha=0.55, lw=1.6, linestyle="--")
-        ax.text(rnd + 0.3, CONSTANT_L_J + 2.5,
-                f"⚡ Ratchet\n(rnd {rnd})",
-                fontsize=7.5, color=C_RATCHET, va="bottom")
-
-    for rnd in adapt_r["asym_ratchet_at"]:
-        ax.axvline(rnd, color=C_ADAPT, alpha=0.5, lw=1.6, linestyle="--")
-        ax.text(rnd + 0.3, ADAPTIVE_L_MAX + 1.4,
-                f"⚡ Ratchet\n(rnd {rnd})",
-                fontsize=7.5, color=C_ADAPT, va="bottom")
-
-    # "ADAPTIVE WINS" badge in the gap region
-    mid_rnd = N_ROUNDS // 2
-    ax.annotate("",
-                xy=(mid_rnd, (CONSTANT_L_J + ADAPTIVE_L_MAX) / 2 + 1),
-                xytext=(mid_rnd, (CONSTANT_L_J + ADAPTIVE_L_MAX) / 2 - 1),
-                arrowprops=dict(arrowstyle="<->", color=C_ADAPT, lw=1.5))
-    ax.text(mid_rnd + 1.5, (CONSTANT_L_J + ADAPTIVE_L_MAX) / 2,
-            f"+{ADAPTIVE_L_MAX - CONSTANT_L_J} rounds\nbetween ratchets",
-            fontsize=8, color=C_ADAPT, fontweight="bold", va="center")
-
-    # Info callout
-    n_c = len(const_r["asym_ratchet_at"])
-    n_a = len(adapt_r["asym_ratchet_at"])
-    info_lines = (
-        f"Asymmetric ratchets (40 rounds):\n"
-        f"  Baseline  :  {n_c}×  (every {CONSTANT_L_J} rounds)\n"
-        f"  Adaptive  :  {n_a}×  (every {ADAPTIVE_L_MAX} rounds)  ← {n_c-n_a} fewer!"
-    )
-    ax.text(0.01, 0.98, info_lines, transform=ax.transAxes,
-            fontsize=9, color=C_TEXT, va="top", ha="left", linespacing=1.5,
-            bbox=dict(boxstyle="round,pad=0.5", facecolor="white",
-                      edgecolor=C_BORDER, alpha=0.95))
-
-    ax.set_xlabel("FL Round", fontsize=11)
-    ax.set_ylabel("Effective L_j  (symmetric ratchet window)", fontsize=11)
-    ax.set_xlim(1, N_ROUNDS)
-    ax.set_ylim(0, ADAPTIVE_L_MAX + 8)
+    ax.set_xlabel("Round", fontsize=11)
+    ax.set_ylabel("Test Accuracy", fontsize=11)
+    ax.set_ylim(0, 1.05)
+    ax.set_xlim(0, ROUNDS)
     ax.grid(True)
-    leg = ax.legend(fontsize=10, loc="upper right",
-                    framealpha=1, edgecolor=C_BORDER)
-    # Green tint on the "adaptive" legend entry
-    leg.get_texts()[1].set_color(C_ADAPT)
-    leg.get_texts()[1].set_fontweight("bold")
-
-    plt.tight_layout(rect=[0, 0, 1, 0.89])
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    ax.legend(fontsize=9, loc="lower right", framealpha=1, edgecolor=C_BORDER)
+    plt.tight_layout(rect=[0, 0, 1, 0.90])
+    out = OUTPUT_DIR / "g1_accuracy.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"\n✅ Graph 1 saved → {out_path}")
+    print(f"✅ G1 saved → {out}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Graph 2 — L_j vs threat level
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Graph 2 — Per-round avg transaction time ──────────────────────────────────
 
-def plot_lj_vs_threat(out_path: str):
-    policy = AdaptiveRatchetPolicy(
-        L_min=ADAPTIVE_L_MIN, L_max=ADAPTIVE_L_MAX, L_default=ADAPTIVE_L_DEF,
-    )
-    tv  = np.linspace(0.0, 1.0, 600)
-    ljv = [policy.compute_L_j(t) for t in tv]
-
-    fig, ax = plt.subplots(figsize=(11, 5.5))
+def plot_tx_time(runs: list[dict]):
+    fig, ax = plt.subplots(figsize=(13, 6))
     fig.patch.set_facecolor(C_BG)
-    fig.text(0.5, 0.97,
-             "Graph 2 — Adaptive L_j vs Threat Level",
+    fig.text(0.5, 0.97, "Graph 2 — Per-Round Average Transaction Time (ms)",
              ha="center", va="top", fontsize=14, fontweight="bold", color=C_TEXT)
-    fig.text(0.5, 0.91,
-             "L_j = L_max − (L_max − L_min) × threat^sensitivity  "
-             "·  At zero threat → L_j = L_max (maximum efficiency)",
+    fig.text(0.5, 0.92, "On-chain Hardhat transactions  ·  averaged per round",
              ha="center", va="top", fontsize=9.5, color=C_SUBTEXT)
 
-    # Shade: zero-threat advantage region (adaptive > constant)
-    ax.fill_between(tv, CONSTANT_L_J, ljv,
-                    where=[l > CONSTANT_L_J for l in ljv],
-                    alpha=0.15, color=C_ADAPT,
-                    label=f"Adaptive BETTER than baseline (L_j > {CONSTANT_L_J})")
+    for i, run in enumerate(runs):
+        if run["result"] is None:
+            continue
+        r = run["result"]
+        v = run["variant"]
+        tx = r.transaction_timings
+        if not tx:
+            continue
+        # Group by round
+        from collections import defaultdict
+        by_round: dict[int, list[float]] = defaultdict(list)
+        for t in tx:
+            by_round[t["round"]].append(t["duration_ms"])
+        rounds_sorted = sorted(by_round)
+        avgs = [float(np.mean(by_round[rnd])) for rnd in rounds_sorted]
+        ax.plot(rounds_sorted, avgs, color=COLORS[i], marker=MARKERS[i],
+                lw=2.2, markersize=5, label=v["label"])
 
-    # Shade: below baseline (extreme threat, adaptive is more restrictive)
-    ax.fill_between(tv, ljv, CONSTANT_L_J,
-                    where=[l < CONSTANT_L_J for l in ljv],
-                    alpha=0.10, color=C_CONST,
-                    label=f"High-threat: adaptive tightens L_j (more secure)")
-
-    # Main adaptive curve
-    ax.plot(tv, ljv, color=C_THREAT, lw=3,
-            label=f"Adaptive L_j curve  (sensitivity = {policy.sensitivity})")
-
-    # Baseline constant line
-    ax.axhline(CONSTANT_L_J, color=C_CONST, lw=2, linestyle="--",
-               label=f"Baseline Constant L_j = {CONSTANT_L_J}")
-
-    # Zero-threat marker
-    ax.scatter([0.0], [ADAPTIVE_L_MAX], s=160, color=C_ADAPT,
-               zorder=6, label=f"Zero-threat operating point  (L_j = {ADAPTIVE_L_MAX})  ← Current")
-    ax.annotate(f"  Zero-Threat\n  L_j = {ADAPTIVE_L_MAX}  ✓",
-                xy=(0.0, ADAPTIVE_L_MAX),
-                xytext=(0.08, ADAPTIVE_L_MAX - 2.5),
-                arrowprops=dict(arrowstyle="->", color=C_ADAPT, lw=1.5),
-                fontsize=10, fontweight="bold", color=C_ADAPT)
-
-    # Current scenario shading
-    ax.axvspan(0, 0.015, color=C_ADAPT, alpha=0.12, zorder=0)
-    ax.text(0.022, ADAPTIVE_L_MAX - 1, "← We are\n   here",
-            fontsize=8.5, color=C_ADAPT, va="top")
-
-    # L_max / L_min labels
-    ax.text(1.01, ADAPTIVE_L_MAX, f"L_max={ADAPTIVE_L_MAX}", va="center",
-            fontsize=8.5, color=C_ADAPT, transform=ax.get_yaxis_transform())
-    ax.text(1.01, ADAPTIVE_L_MIN, f"L_min={ADAPTIVE_L_MIN}", va="center",
-            fontsize=8.5, color=C_RATCHET, transform=ax.get_yaxis_transform())
-
-    ax.set_xlabel("Composite Threat Level  (0 = no threat,  1 = maximum threat)", fontsize=11)
-    ax.set_ylabel("Effective L_j  (symmetric ratchet window)", fontsize=11)
-    ax.set_xlim(-0.01, 1.01)
-    ax.set_ylim(0, ADAPTIVE_L_MAX + 5)
-    ax.set_xticks(np.arange(0, 1.1, 0.1))
+    ax.set_xlabel("Round", fontsize=11)
+    ax.set_ylabel("Avg Transaction Time (ms)", fontsize=11)
     ax.grid(True)
     ax.legend(fontsize=9, loc="upper right", framealpha=1, edgecolor=C_BORDER)
-
-    plt.tight_layout(rect=[0, 0, 1, 0.89])
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.tight_layout(rect=[0, 0, 1, 0.90])
+    out = OUTPUT_DIR / "g2_tx_time.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"✅ Graph 2 saved → {out_path}")
+    print(f"✅ G2 saved → {out}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Graph 3 — Timing comparison (main ask)
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Graph 3 — Per-round avg off-chain op time ─────────────────────────────────
 
-def _timing_common(const_r, adapt_r):
-    """Pre-compute shared values used by all three timing graphs."""
-    t_const = ms(const_r["time_total"])
-    t_adapt = ms(adapt_r["time_total"])
-    avg_c   = float(np.mean(t_const))
-    avg_a   = float(np.mean(t_adapt))
-    speedup = (avg_c - avg_a) / avg_c * 100
-    n_c     = len(const_r["asym_ratchet_at"])
-    n_a     = len(adapt_r["asym_ratchet_at"])
-    cum_c   = list(np.cumsum(t_const))
-    cum_a   = list(np.cumsum(t_adapt))
-    return t_const, t_adapt, avg_c, avg_a, speedup, n_c, n_a, cum_c, cum_a
-
-
-def plot_timing_per_round(const_r, adapt_r, out_path: str):
-    """Graph 3a — per-round total latency."""
-    rounds = const_r["rounds"]
-    t_const, t_adapt, avg_c, avg_a, speedup, n_c, n_a, _, _ = _timing_common(const_r, adapt_r)
-
-    fig, ax = plt.subplots(figsize=(13, 5.5))
+def plot_op_time(runs: list[dict]):
+    fig, ax = plt.subplots(figsize=(13, 6))
     fig.patch.set_facecolor(C_BG)
-    fig.text(0.5, 0.97,
-             "Graph 3a — Per-Round Total Latency (ms)",
+    fig.text(0.5, 0.97, "Graph 3 — Per-Round Average Off-Chain Operation Time (ms)",
              ha="center", va="top", fontsize=14, fontweight="bold", color=C_TEXT)
-    fig.text(0.5, 0.91,
-             f"Zero-Threat Scenario  ·  Adaptive is {speedup:.0f}% faster on average  "
-             f"·  Spikes = asymmetric (PQ) ratchet events",
+    fig.text(0.5, 0.92, "Cryptographic + training operations  ·  averaged per round",
              ha="center", va="top", fontsize=9.5, color=C_SUBTEXT)
 
-    ax.fill_between(rounds, t_const, t_adapt,
-                    where=[c >= a for c, a in zip(t_const, t_adapt)],
-                    alpha=0.13, color=C_ADAPT)
-    ax.plot(rounds, t_const, color=C_CONST, lw=2.2,
-            label=f"Baseline PQBFL  (Constant L_j = {CONSTANT_L_J})")
-    ax.plot(rounds, t_adapt, color=C_ADAPT, lw=2.5,
-            label=f"Adaptive PQBFL  (Zero-Threat, L_j = {ADAPTIVE_L_MAX})  — FASTER")
+    for i, run in enumerate(runs):
+        if run["result"] is None:
+            continue
+        r = run["result"]
+        v = run["variant"]
+        ops = r.operation_timings
+        if not ops:
+            continue
+        from collections import defaultdict
+        by_round: dict[int, list[float]] = defaultdict(list)
+        for o in ops:
+            by_round[o["round"]].append(o["duration_ms"])
+        rounds_sorted = sorted(by_round)
+        avgs = [float(np.mean(by_round[rnd])) for rnd in rounds_sorted]
+        ax.plot(rounds_sorted, avgs, color=COLORS[i], marker=MARKERS[i],
+                lw=2.2, markersize=5, label=v["label"])
 
-    for rnd in const_r["asym_ratchet_at"]:
-        ax.axvspan(rnd - 0.45, rnd + 0.45, alpha=0.18, color=C_RATCHET)
-        ax.text(rnd, max(t_const) * 1.01, "Ratchet", ha="center",
-                fontsize=7.5, color=C_RATCHET, rotation=90, va="bottom")
-    for rnd in adapt_r["asym_ratchet_at"]:
-        ax.axvspan(rnd - 0.45, rnd + 0.45, alpha=0.13, color=C_ADAPT)
-        ax.text(rnd, max(t_adapt) * 0.80, "Ratchet", ha="center",
-                fontsize=7.5, color=C_ADAPT, rotation=90, va="bottom")
-
-    ax.axhline(avg_c, color=C_CONST, lw=1.2, linestyle=":", alpha=0.75)
-    ax.axhline(avg_a, color=C_ADAPT, lw=1.2, linestyle=":", alpha=0.75)
-    ax.text(N_ROUNDS + 0.4, avg_c, f"avg {avg_c:.2f}ms",
-            va="center", fontsize=8.5, color=C_CONST)
-    ax.text(N_ROUNDS + 0.4, avg_a, f"avg {avg_a:.2f}ms",
-            va="center", fontsize=8.5, color=C_ADAPT, fontweight="bold")
-
-    ax.set_xlabel("FL Round", fontsize=11)
-    ax.set_ylabel("Latency (ms)", fontsize=11)
-    ax.set_xlim(1, N_ROUNDS + 5)
+    ax.set_xlabel("Round", fontsize=11)
+    ax.set_ylabel("Avg Off-Chain Op Time (ms)", fontsize=11)
     ax.grid(True)
-    leg = ax.legend(fontsize=10, loc="upper left", framealpha=1, edgecolor=C_BORDER)
-    leg.get_texts()[1].set_color(C_ADAPT)
-    leg.get_texts()[1].set_fontweight("bold")
-
-    # Summary banner
-    acc_c = float(np.mean(const_r["accuracies"]))
-    acc_a = float(np.mean(adapt_r["accuracies"]))
-    fig.text(0.5, 0.03,
-             f"  Adaptive PQBFL is {speedup:.0f}% faster  |  "
-             f"Same accuracy ({acc_c:.3f} vs {acc_a:.3f})  |  "
-             f"{n_c - n_a} fewer ratchets over {N_ROUNDS} rounds  ",
-             ha="center", va="bottom", fontsize=10, fontweight="bold", color="white",
-             bbox=dict(boxstyle="round,pad=0.45", facecolor=C_ADAPT,
-                       edgecolor="none", alpha=0.93))
-
-    plt.tight_layout(rect=[0, 0.08, 1, 0.89])
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    ax.legend(fontsize=9, loc="upper right", framealpha=1, edgecolor=C_BORDER)
+    plt.tight_layout(rect=[0, 0, 1, 0.90])
+    out = OUTPUT_DIR / "g3_op_time.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"✅ Graph 3a saved → {out_path}")
+    print(f"✅ G3 saved → {out}")
 
 
-def plot_timing_cumulative(const_r, adapt_r, out_path: str):
-    """Graph 3b — cumulative total overhead."""
-    rounds = const_r["rounds"]
-    t_const, t_adapt, avg_c, avg_a, speedup, n_c, n_a, cum_c, cum_a = _timing_common(const_r, adapt_r)
-    saved = cum_c[-1] - cum_a[-1]
+# ── Graph 4 — Cumulative total time (tx + ops) ────────────────────────────────
 
-    fig, ax = plt.subplots(figsize=(11, 5.5))
+def plot_cumulative(runs: list[dict]):
+    fig, ax = plt.subplots(figsize=(13, 6))
     fig.patch.set_facecolor(C_BG)
-    fig.text(0.5, 0.97,
-             "Graph 3b — Cumulative Round Overhead (ms)",
+    fig.text(0.5, 0.97, "Graph 4 — Cumulative Total Time (ms) Over Rounds",
              ha="center", va="top", fontsize=14, fontweight="bold", color=C_TEXT)
-    fig.text(0.5, 0.91,
-             f"Zero-Threat Scenario  ·  Green shading = time saved by Adaptive PQBFL",
+    fig.text(0.5, 0.92, "Sum of all transaction + off-chain operation durations  ·  cumulative",
              ha="center", va="top", fontsize=9.5, color=C_SUBTEXT)
 
-    ax.fill_between(rounds, cum_c, cum_a,
-                    alpha=0.18, color=C_ADAPT, label=f"Time saved ({saved:.1f} ms total)")
-    ax.plot(rounds, cum_c, color=C_CONST, lw=2.4,
-            label=f"Baseline PQBFL  (Constant L_j = {CONSTANT_L_J})")
-    ax.plot(rounds, cum_a, color=C_ADAPT, lw=2.7,
-            label=f"Adaptive PQBFL  (Zero-Threat, L_j = {ADAPTIVE_L_MAX})  — BETTER")
+    for i, run in enumerate(runs):
+        if run["result"] is None:
+            continue
+        r = run["result"]
+        v = run["variant"]
 
-    # Jump markers at ratchet rounds
-    for rnd in const_r["asym_ratchet_at"]:
-        ax.axvline(rnd, color=C_RATCHET, lw=1.3, linestyle="--", alpha=0.55)
-        ax.text(rnd + 0.4, cum_c[rnd - 1] * 0.85,
-                f"Ratchet\n(rnd {rnd})", fontsize=7.5, color=C_RATCHET)
-    for rnd in adapt_r["asym_ratchet_at"]:
-        ax.axvline(rnd, color=C_ADAPT, lw=1.3, linestyle="--", alpha=0.45)
+        from collections import defaultdict
+        by_round: dict[int, float] = defaultdict(float)
+        for t in r.transaction_timings:
+            by_round[t["round"]] += t["duration_ms"]
+        for o in r.operation_timings:
+            by_round[o["round"]] += o["duration_ms"]
 
-    # "Saved" annotation
-    mid = N_ROUNDS * 3 // 4
-    ax.annotate(f"Saved\n{saved:.1f} ms\ntotal",
-                xy=(N_ROUNDS, (cum_c[-1] + cum_a[-1]) / 2),
-                xytext=(mid, (cum_c[mid - 1] + cum_a[mid - 1]) / 2 + 5),
-                arrowprops=dict(arrowstyle="->", color=C_ADAPT, lw=1.5),
-                fontsize=10, color=C_ADAPT, fontweight="bold")
+        rounds_sorted = sorted(by_round)
+        totals = [by_round[rnd] for rnd in rounds_sorted]
+        cumulative = list(np.cumsum(totals))
+        ax.plot(rounds_sorted, cumulative, color=COLORS[i], marker=MARKERS[i],
+                lw=2.2, markersize=5, label=v["label"])
 
-    ax.set_xlabel("FL Round", fontsize=11)
+    ax.set_xlabel("Round", fontsize=11)
     ax.set_ylabel("Cumulative Time (ms)", fontsize=11)
-    ax.set_xlim(1, N_ROUNDS)
     ax.grid(True)
-    leg = ax.legend(fontsize=10, loc="upper left", framealpha=1, edgecolor=C_BORDER)
-    leg.get_texts()[2].set_color(C_ADAPT)
-    leg.get_texts()[2].set_fontweight("bold")
-
-    acc_c = float(np.mean(const_r["accuracies"]))
-    acc_a = float(np.mean(adapt_r["accuracies"]))
-    fig.text(0.5, 0.03,
-             f"  Adaptive PQBFL is {speedup:.0f}% faster  |  "
-             f"Same accuracy ({acc_c:.3f} vs {acc_a:.3f})  |  "
-             f"{n_c - n_a} fewer ratchets over {N_ROUNDS} rounds  ",
-             ha="center", va="bottom", fontsize=10, fontweight="bold", color="white",
-             bbox=dict(boxstyle="round,pad=0.45", facecolor=C_ADAPT,
-                       edgecolor="none", alpha=0.93))
-
-    plt.tight_layout(rect=[0, 0.08, 1, 0.89])
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    ax.legend(fontsize=9, loc="upper left", framealpha=1, edgecolor=C_BORDER)
+    plt.tight_layout(rect=[0, 0, 1, 0.90])
+    out = OUTPUT_DIR / "g4_cumulative.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"✅ Graph 3b saved → {out_path}")
+    print(f"✅ G4 saved → {out}")
 
 
-def plot_timing_bar_metrics(const_r, adapt_r, out_path: str):
-    """Graph 3c — key metrics bar chart comparison."""
-    t_const, t_adapt, avg_c, avg_a, speedup, n_c, n_a, _, _ = _timing_common(const_r, adapt_r)
-    acc_c = float(np.mean(const_r["accuracies"]))
-    acc_a = float(np.mean(adapt_r["accuracies"]))
+# ── Graph 5 — Bar chart: key metrics ─────────────────────────────────────────
 
-    fig, ax = plt.subplots(figsize=(10, 5.5))
+def plot_bar_metrics(runs: list[dict]):
+    labels     = []
+    final_accs = []
+    avg_tx     = []
+    avg_op     = []
+
+    for run in runs:
+        v = run["variant"]
+        labels.append(v["label"].replace(" · ", "\n"))
+        if run["result"] is None:
+            final_accs.append(0.0)
+            avg_tx.append(0.0)
+            avg_op.append(0.0)
+        else:
+            r = run["result"]
+            final_accs.append(r.final_accuracy)
+            avg_tx.append(r.avg_transaction_time_ms)
+            avg_op.append(r.avg_operation_time_ms)
+
+    x  = np.arange(len(labels))
+    bw = 0.25
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 6))
     fig.patch.set_facecolor(C_BG)
-    fig.text(0.5, 0.97,
-             "Graph 3c — Key Performance Metrics: Baseline vs Adaptive PQBFL",
+    fig.text(0.5, 0.97, "Graph 5 — Key Metrics Comparison Across All 5 Variants",
              ha="center", va="top", fontsize=14, fontweight="bold", color=C_TEXT)
-    fig.text(0.5, 0.91,
-             "Zero-Threat Scenario  ·  Lower bars are better for Ratchets & Latency; "
-             "Higher bar is better for Speedup",
+    fig.text(0.5, 0.92, "Final accuracy (higher=better)  ·  Avg tx time (lower=better)  ·  Avg op time (lower=better)",
              ha="center", va="top", fontsize=9.5, color=C_SUBTEXT)
 
-    categories  = ["Asymmetric\nRatchets (count)", "Avg Round\nLatency (ms)", "Speedup (%)"]
-    const_vals  = [n_c,    round(avg_c, 2), 0.0]
-    adapt_vals  = [n_a,    round(avg_a, 2), round(speedup, 1)]
-    x           = np.arange(len(categories))
-    bw          = 0.32
+    for ax, vals, title, ylabel in zip(
+        axes,
+        [final_accs, avg_tx, avg_op],
+        ["Final Test Accuracy", "Avg Transaction Time (ms)", "Avg Off-Chain Op Time (ms)"],
+        ["Accuracy", "ms", "ms"],
+    ):
+        bars = ax.bar(x, vals, color=COLORS[:len(labels)], alpha=0.88, zorder=3,
+                      edgecolor="white", linewidth=0.8)
+        for bar, val in zip(bars, vals):
+            ax.text(bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + max(vals) * 0.02,
+                    f"{val:.3f}" if val < 1 else f"{val:.2f}",
+                    ha="center", va="bottom", fontsize=8.5, fontweight="bold",
+                    color=C_TEXT)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, fontsize=7.5, rotation=15, ha="right")
+        ax.set_ylabel(ylabel, fontsize=10)
+        ax.set_title(title, fontsize=11, fontweight="bold")
+        ax.set_facecolor(C_AX)
+        ax.grid(True, axis="y", alpha=0.7)
+        ax.set_ylim(0, max(vals) * 1.18 if max(vals) > 0 else 1)
 
-    bars_c = ax.bar(x - bw / 2, const_vals, bw, color=C_CONST,
-                    alpha=0.85, label=f"Baseline PQBFL  (L_j = {CONSTANT_L_J})", zorder=3)
-    bars_a = ax.bar(x + bw / 2, adapt_vals, bw, color=C_ADAPT,
-                    alpha=0.90, label=f"Adaptive PQBFL  (L_j = {ADAPTIVE_L_MAX})  — BETTER", zorder=3)
-
-    for bar in bars_c:
-        v = bar.get_height()
-        if v > 0:
-            ax.text(bar.get_x() + bar.get_width() / 2, v + 0.08,
-                    f"{v}", ha="center", va="bottom",
-                    fontsize=11, color=C_CONST, fontweight="bold")
-    for bar in bars_a:
-        v = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width() / 2, v + 0.08,
-                f"{v}", ha="center", va="bottom",
-                fontsize=11, color=C_ADAPT, fontweight="bold")
-
-    # Improvement arrows for ratchets and latency
-    for xi in [0, 1]:
-        hc = const_vals[xi]
-        ha_ = adapt_vals[xi]
-        top = max(hc, ha_)
-        ax.annotate("", xy=(xi + bw / 2, ha_ + 0.5),
-                    xytext=(xi - bw / 2, hc + 0.5),
-                    arrowprops=dict(arrowstyle="->", color="#555", lw=1.4))
-
-    ax.set_xticks(x)
-    ax.set_xticklabels(categories, fontsize=10.5)
-    ax.set_ylabel("Value", fontsize=11)
-    ax.grid(True, axis="y")
-    leg = ax.legend(fontsize=10, loc="upper center", framealpha=1, edgecolor=C_BORDER)
-    leg.get_texts()[1].set_color(C_ADAPT)
-    leg.get_texts()[1].set_fontweight("bold")
-
-    fig.text(0.5, 0.03,
-             f"  Adaptive PQBFL is {speedup:.0f}% faster  |  "
-             f"Same accuracy ({acc_c:.3f} vs {acc_a:.3f})  |  "
-             f"{n_c - n_a} fewer ratchets over {N_ROUNDS} rounds  ",
-             ha="center", va="bottom", fontsize=10, fontweight="bold", color="white",
-             bbox=dict(boxstyle="round,pad=0.45", facecolor=C_ADAPT,
-                       edgecolor="none", alpha=0.93))
-
-    plt.tight_layout(rect=[0, 0.08, 1, 0.89])
-    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.tight_layout(rect=[0, 0, 1, 0.90])
+    out = OUTPUT_DIR / "g5_bar_metrics.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
     plt.close()
-    print(f"✅ Graph 3c saved → {out_path}")
+    print(f"✅ G5 saved → {out}")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────────────────────────────────────
+# ── console summary ───────────────────────────────────────────────────────────
+
+def print_summary(runs: list[dict]):
+    print(f"\n{'='*72}")
+    print(f"  ALL-VARIANTS SUMMARY")
+    print(f"{'='*72}")
+    hdr = f"  {'Variant':<36} {'FinalAcc':>9} {'AvgTx(ms)':>10} {'AvgOp(ms)':>10} {'Txns':>6} {'Ops':>6}"
+    print(hdr)
+    print(f"  {'─'*70}")
+    for run in runs:
+        v = run["variant"]
+        if run["result"] is None:
+            print(f"  {v['label']:<36}  FAILED: {run['error'][:30]}")
+            continue
+        r = run["result"]
+        print(f"  {v['label']:<36} {r.final_accuracy:>9.4f} "
+              f"{r.avg_transaction_time_ms:>10.2f} "
+              f"{r.avg_operation_time_ms:>10.2f} "
+              f"{r.total_transactions:>6} "
+              f"{r.total_operations:>6}")
+    print(f"{'='*72}\n")
+    print(f"  Output → {OUTPUT_DIR}/\n")
+
+
+# ── main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    print("\n" + "=" * 56)
-    print("  PQBFL Zero-Threat Performance Benchmark")
-    print(f"  Constant L_j = {CONSTANT_L_J}  vs  Adaptive (L_max = {ADAPTIVE_L_MAX})")
-    print("=" * 56)
+    print(f"\n{'='*72}")
+    print(f"  PQBFL All-Variants Comparison")
+    print(f"  Rounds={ROUNDS}  Clients={N_CLIENTS}  Chain={CHAIN_URL}")
+    print(f"{'='*72}")
 
-    data = make_synthetic_federated_binary(
-        n_clients=N_CLIENTS, n_train_per_client=N_TRAIN,
-        n_test=N_TEST, d=D, seed=SEED, non_iid=True,
-    )
+    runs = run_all()
 
-    const_r = run_simulation(use_adaptive=False, data=data)
-    adapt_r = run_simulation(use_adaptive=True,  data=data)
+    ok = [r for r in runs if r["result"] is not None]
+    if not ok:
+        print("❌ All variants failed — cannot generate graphs.")
+        return
 
-    print("\n" + "="*56 + "\n  Generating graphs…\n" + "="*56)
-
-    plot_lj_over_rounds(const_r, adapt_r,
-        out_path=os.path.join(OUTPUT_DIR, "graph1_lj_over_rounds.png"))
-    plot_lj_vs_threat(
-        out_path=os.path.join(OUTPUT_DIR, "graph2_lj_vs_threat.png"))
-    plot_timing_per_round(const_r, adapt_r,
-        out_path=os.path.join(OUTPUT_DIR, "graph3a_per_round_latency.png"))
-    plot_timing_cumulative(const_r, adapt_r,
-        out_path=os.path.join(OUTPUT_DIR, "graph3b_cumulative_overhead.png"))
-    plot_timing_bar_metrics(const_r, adapt_r,
-        out_path=os.path.join(OUTPUT_DIR, "graph3c_key_metrics.png"))
-
-    # ── console summary ───────────────────────────────────────────
-    avg_c  = np.mean(const_r["time_total"]) * 1000
-    avg_a  = np.mean(adapt_r["time_total"]) * 1000
-    pct    = (avg_c - avg_a) / avg_c * 100
-    n_ac   = len(const_r["asym_ratchet_at"])
-    n_aa   = len(adapt_r["asym_ratchet_at"])
-    acc_c  = np.mean(const_r["accuracies"])
-    acc_a  = np.mean(adapt_r["accuracies"])
-
-    print(f"\n{'='*56}\n  RESULTS SUMMARY\n{'='*56}")
-    print(f"  {'':32} {'Baseline':>10} {'Adaptive':>10}")
-    print(f"  {'─'*54}")
-    print(f"  {'Avg round latency (ms)':.<32} {avg_c:>10.2f} {avg_a:>10.2f}")
-    print(f"  {'Asymmetric ratchets':.<32} {n_ac:>10} {n_aa:>10}")
-    print(f"  {'L_j (zero-threat)':.<32} {CONSTANT_L_J:>10} {ADAPTIVE_L_MAX:>10}")
-    print(f"  {'Avg FL accuracy':.<32} {acc_c:>10.3f} {acc_a:>10.3f}")
-    print(f"  {'Adaptive speedup':.<32} {'—':>10} {pct:>9.1f}%")
-    print(f"\n  Graphs → {OUTPUT_DIR}/\n{'='*56}\n")
+    print(f"\n{'='*72}\n  Generating graphs…\n{'='*72}")
+    plot_accuracy(runs)
+    plot_tx_time(runs)
+    plot_op_time(runs)
+    plot_cumulative(runs)
+    plot_bar_metrics(runs)
+    print_summary(runs)
 
 
 if __name__ == "__main__":

@@ -48,19 +48,36 @@ class AdaptiveRatchetPolicy:
         Maximum L_j (used at zero threat).
     L_default : int
         Starting value for L_j before any adaptation.
-    sensitivity : float
-        Exponent for the mapping curve.  Higher values make L_j drop
-        faster as threat increases.  Default 2.0 (quadratic).
     cooldown_rounds : int
         Minimum number of rounds between consecutive L_j changes to
         prevent oscillation.  Default 1.
+    alpha : float
+        Security risk weight coefficient in the joint optimization. Default 1.0.
+    beta : float
+        Communication cost weight coefficient. Default 1.0.
+    gamma : float
+        Energy cost weight coefficient. Default 1.0.
+    N : int
+        Number of federated learning rounds. Default 50.
+    C_kem : float
+        Measured communication cost per KEM re-keying operation. Default 0.1386.
+    E_kem : float
+        Measured energy cost per KEM re-keying operation. Default 0.1386.
+    sensitivity : float
+        Exponent kept for backward compatibility. Default 2.0.
     """
 
     L_min: int = 2
     L_max: int = 20
     L_default: int = 10
-    sensitivity: float = 2.0
     cooldown_rounds: int = 1
+    alpha: float = 1.0
+    beta: float = 1.0
+    gamma: float = 1.0
+    N: int = 50
+    C_kem: float = 0.1386
+    E_kem: float = 0.1386
+    sensitivity: float = 2.0
 
     _current_L_j: int = field(init=False, repr=False)
     _last_change_round: int = field(default=-100, init=False, repr=False)
@@ -77,16 +94,21 @@ class AdaptiveRatchetPolicy:
     def compute_L_j(self, threat_level: float) -> int:
         """Compute the ideal L_j for a given threat level.
 
-        Uses a power-curve mapping:
-            L_j = L_max - (L_max - L_min) × threat^sensitivity
-
-        At threat_level=0.0  → L_j = L_max  (relaxed)
-        At threat_level=1.0  → L_j = L_min  (maximum security)
+        Uses the joint optimization-based threshold selection model:
+            L_j* = sqrt( N * (beta * C_kem + gamma * E_kem) / (alpha * Theta_epsilon(t)) )
+            where Theta_epsilon(t) = max(threat_level, 1e-6) to avoid singularity.
+            The result is bounded within [L_min, L_max].
         """
         t = max(0.0, min(1.0, threat_level))
-        span = self.L_max - self.L_min
-        reduction = span * (t ** self.sensitivity)
-        return max(self.L_min, round(self.L_max - reduction))
+        t_eps = max(t, 1e-6)
+        
+        # Calculate optimal L_j^* using closed-form derivation
+        numerator = self.N * (self.beta * self.C_kem + self.gamma * self.E_kem)
+        denominator = self.alpha * t_eps
+        L_j_star = math.sqrt(numerator / denominator)
+        
+        # Bound within [L_min, L_max]
+        return max(self.L_min, min(self.L_max, round(L_j_star)))
 
     def evaluate(
         self,

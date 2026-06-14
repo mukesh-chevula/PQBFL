@@ -1,0 +1,839 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{titlesec}
+\usepackage{parskip}
+\usepackage{microtype}
+\usepackage{fancyhdr}
+\usepackage{enumitem}
+
+% ── Colours ──────────────────────────────────────────────────────
+\definecolor{codebg}{HTML}{F4F4F4}
+\definecolor{linkblue}{HTML}{1A5276}
+\definecolor{headergray}{HTML}{2C3E50}
+
+% ── Hyperlinks ───────────────────────────────────────────────────
+\hypersetup{
+  colorlinks=true,
+  linkcolor=linkblue,
+  urlcolor=linkblue,
+  pdfauthor={PQBFL Project},
+  pdftitle={PQBFL Algorithm and Framework Usage Map},
+}
+
+% ── Code style ───────────────────────────────────────────────────
+\lstset{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=none,
+  xleftmargin=0pt,
+}
+\newcommand{\code}[1]{\lstinline[basicstyle=\ttfamily\small]!#1!}
+
+% ── Section formatting ───────────────────────────────────────────
+\titleformat{\section}{\large\bfseries\color{headergray}}{}{0em}{}[\titlerule]
+\titleformat{\subsection}{\normalsize\bfseries}{}{0em}{}
+\titleformat{\subsubsection}{\normalsize\itshape}{}{0em}{}
+
+% ── Table column types ───────────────────────────────────────────
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% ── Header / Footer ──────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\small PQBFL Algorithm \& Framework Usage Map}
+\lhead{\small\textit{pqbfl\_project new adaptive side channel resistant}}
+\cfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ─────────────────────────────────────────────────────────────────
+\begin{document}
+
+\begin{titlepage}
+  \centering
+  \vspace*{3cm}
+  {\LARGE\bfseries PQBFL\par}
+  \vspace{0.5em}
+  {\Large Algorithm \& Framework Usage Map\par}
+  \vspace{1.5em}
+  {\normalsize\itshape Project: \texttt{pqbfl\_project new adaptive side channel resistant}\par}
+  \vspace{0.5em}
+  {\normalsize All paths are relative to that project root.\par}
+  \vfill
+  {\small May 2026\par}
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% =================================================================
+\section{Post-Quantum Cryptography}
+% =================================================================
+
+\subsection{1.1\quad Kyber512 / ML-KEM-512 (Post-Quantum KEM)}
+
+\textbf{Definition file:} \code{python/pqbfl/crypto/kyber.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+14--15  & \code{from pqcrypto.kem import ml_kem_512} --- preferred modern backend \\
+21--22  & \code{from pqcrypto.kem import kyber512} --- older pqcrypto fallback \\
+26--31  & Toy KEM fallback warning when neither wheel is available \\
+37--41  & \code{KyberKeypair} frozen dataclass (\code{public\_key}, \code{secret\_key}) \\
+44--51  & \code{kyber\_keygen()} --- calls \code{\_kem.generate\_keypair()} or toy fallback \\
+53--57  & \code{KyberEncapResult} frozen dataclass (\code{ciphertext}, \code{shared\_secret}) \\
+60--77  & \code{kyber\_encap(public\_key)} --- SC-protected: simulate trace on pk $\to$ apply\_defense $\to$ \code{\_kem.encrypt(pk)} \\
+79--101 & \code{kyber\_decap(ciphertext, secret\_key)} --- SC-protected: \textbf{mask\_bytes(sk)} $\to$ simulate traces on both shares $\to$ combine $\to$ apply\_defense $\to$ \code{\_kem.decrypt(sk, ct)} \\
+104--110 & \code{\_toy\_public\_from\_secret()} / \code{\_toy\_shared\_secret()} --- toy fallback using SHA-256 \\
+112--113 & \code{get\_kem\_backend\_name()} --- returns which backend is active \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{1.8cm} L{7cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/protocol.py}              & 11      & Import: \code{KyberEncapResult, KyberKeypair, kyber\_decap, kyber\_encap, kyber\_keygen} \\
+\code{python/pqbfl/protocol.py}              & 35      & \code{ServerKeys.kem: KyberKeypair} --- server holds KEM keypair \\
+\code{python/pqbfl/protocol.py}              & 48      & \code{kyber\_keygen()} inside \code{server\_generate\_keys()} \\
+\code{python/pqbfl/protocol.py}              & 70      & \code{kyber\_encap(kpk\_b)} inside \code{client\_process\_server\_pubkeys()} --- client encapsulates to server \\
+\code{python/pqbfl/protocol.py}              & 92      & \code{kyber\_decap(ct, server.kem.secret\_key)} inside \code{server\_finish\_session()} --- server decapsulates \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 241     & \code{server\_generate\_keys()} --- triggers \code{kyber\_keygen()} for server \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 319--329 & \code{client\_process\_server\_pubkeys(...)} --- triggers \code{kyber\_encap()} per client \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 337--343 & \code{server\_finish\_session(...)} --- triggers \code{kyber\_decap()} per client \\
+\end{longtable}
+
+% =================================================================
+\section{Classical Cryptography}
+% =================================================================
+
+\subsection{2.1\quad X25519 (ECDH --- Curve25519)}
+
+\textbf{Definition file:} \code{python/pqbfl/crypto/ecdh.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+6       & \code{from cryptography.hazmat.primitives.asymmetric import ec, x25519} \\
+20--23  & \code{X25519Keypair} frozen dataclass (\code{private\_key}, \code{public\_key\_bytes}) \\
+55--63  & \code{ecdh\_keygen\_x25519()} --- \code{X25519PrivateKey.generate()} \\
+65--82  & \code{ecdh\_shared\_secret\_x25519(private\_key, peer\_pk)} --- SC-protected: \textbf{mask\_bytes(priv\_bytes)} $\to$ simulate\_trace on both shares $\to$ combine $\to$ apply\_defense $\to$ \code{private\_key.exchange(peer\_pub)} \\
+\end{longtable}
+
+\textit{Also implemented (unused in main flow):} \code{ecdh\_keygen\_secp256k1()} (L24--32) and \code{ecdh\_shared\_secret\_secp256k1()} (L34--53) for secp256k1.
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{1.8cm} L{7cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/protocol.py}              & 7       & Import: \code{X25519Keypair, ecdh\_keygen\_x25519, ecdh\_shared\_secret\_x25519} \\
+\code{python/pqbfl/protocol.py}              & 36      & \code{ServerKeys.ecdh: X25519Keypair} \\
+\code{python/pqbfl/protocol.py}              & 41      & \code{ClientKeys.ecdh: X25519Keypair} \\
+\code{python/pqbfl/protocol.py}              & 50      & \code{ecdh\_keygen\_x25519()} in \code{server\_generate\_keys()} \\
+\code{python/pqbfl/protocol.py}              & 51      & \code{ecdh\_keygen\_x25519()} in \code{client\_generate\_keys()} \\
+\code{python/pqbfl/protocol.py}              & 69      & \code{ecdh\_shared\_secret\_x25519(client.ecdh.private\_key, epk\_b)} in \code{client\_process\_server\_pubkeys()} $\to$ derives \code{ss\_e} \\
+\code{python/pqbfl/protocol.py}              & 88      & \code{ecdh\_shared\_secret\_x25519(server.ecdh.private\_key, epk\_a)} in \code{server\_finish\_session()} $\to$ derives \code{ss\_e} \\
+\code{python/pqbfl/protocol.py}              & 96      & \code{ecdh\_shared\_secret\_x25519(client.ecdh.private\_key, epk\_b)} in \code{client\_finish\_session()} $\to$ derives \code{ss\_e} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 241     & \code{server\_generate\_keys()} $\to$ triggers \code{ecdh\_keygen\_x25519()} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 268     & \code{client\_generate\_keys()} $\to$ triggers \code{ecdh\_keygen\_x25519()} per client \\
+\end{longtable}
+
+% -----------------------------------------------------------------
+\subsection{2.2\quad Ed25519 (Digital Signatures)}
+
+\textbf{Definition file:} \code{python/pqbfl/crypto/eddsa.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+6       & \code{from cryptography.hazmat.primitives.asymmetric import ed25519} \\
+12--15  & \code{Ed25519Keypair} frozen dataclass (\code{private\_key}, \code{public\_key\_bytes}) \\
+18--26  & \code{ed25519\_keygen()} --- \code{Ed25519PrivateKey.generate()} \\
+28--45  & \code{ed25519\_sign(private\_key, message)} --- SC-protected: \textbf{mask\_bytes(priv\_bytes)} $\to$ simulate\_trace on both shares $\to$ combine $\to$ apply\_defense $\to$ \code{private\_key.sign(message)} \\
+47--53  & \code{ed25519\_verify(public\_key\_bytes, message, signature)} --- \code{pub.verify(sig, msg)} with exception-safe bool return \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{1.8cm} L{7cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/protocol.py}              & 8       & Import: \code{Ed25519Keypair, ed25519\_keygen, ed25519\_sign, ed25519\_verify} \\
+\code{python/pqbfl/protocol.py}              & 34      & \code{ServerKeys.sig: Ed25519Keypair} \\
+\code{python/pqbfl/protocol.py}              & 40      & \code{ClientKeys.sig: Ed25519Keypair} \\
+\code{python/pqbfl/protocol.py}              & 47      & \code{ed25519\_keygen()} in \code{server\_generate\_keys()} (sig keypair) \\
+\code{python/pqbfl/protocol.py}              & 52      & \code{ed25519\_keygen()} in \code{client\_generate\_keys()} (sig keypair) \\
+\code{python/pqbfl/protocol.py}              & 57      & \code{ed25519\_sign(server.sig.private\_key, msg\_bytes)} in \code{server\_send\_pubkeys()} --- signs \{kpk\_b, epk\_b, tx\_r\} \\
+\code{python/pqbfl/protocol.py}              & 62      & \code{ed25519\_verify(server\_sig\_pk, msg\_bytes, signed.signature)} in \code{client\_process\_server\_pubkeys()} \\
+\code{python/pqbfl/protocol.py}              & 78      & \code{ed25519\_sign(client.sig.private\_key, msg\_bytes)} in \code{client\_send\_epk\_and\_ct()} --- signs \{epk\_a, ct, tx\_r\} \\
+\code{python/pqbfl/protocol.py}              & 80      & \code{ed25519\_verify(client\_sig\_pk, msg\_bytes, signed.signature)} in \code{server\_finish\_session()} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 28      & Import: \code{ed25519\_verify} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 413     & \code{sig = server\_keys.sig.private\_key.sign(ct)} --- direct Ed25519 sign on round ciphertext \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 414     & \code{ed25519\_verify(server\_keys.sig.public\_key\_bytes, ct, sig)} --- verify server's round signature \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 447     & \code{sig\_u = client\_keys.sig.private\_key.sign(ct\_u)} --- client signs update ciphertext \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 448     & \code{ed25519\_verify(client\_keys.sig.public\_key\_bytes, ct\_u, sig\_u)} --- server verifies client sig \\
+\end{longtable}
+
+% -----------------------------------------------------------------
+\subsection{2.3\quad ChaCha20-Poly1305 (AEAD Encryption)}
+
+\textbf{Definition file:} \code{python/pqbfl/crypto/aead.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+3       & \code{from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305} \\
+8--15   & \code{nonce\_for\_round(round\_num, label)} --- deterministic 12-byte nonce: \code{hash32("pqbfl:\{label\}:\{round\}")[:12]} \\
+17--34  & \code{aead\_encrypt(key32, plaintext, aad, nonce)} --- SC-protected: \textbf{mask\_bytes(key32)} $\to$ simulate\_trace on shares $\to$ apply\_defense $\to$ \code{ChaCha20Poly1305(key).encrypt(nonce, pt, aad)} \\
+36--52  & \code{aead\_decrypt(key32, ciphertext, aad, nonce)} --- SC-protected: same masking pattern $\to$ \code{ChaCha20Poly1305(key).decrypt(nonce, ct, aad)} \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{1.8cm} L{7cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/protocol.py}              & 3       & Import: \code{aead\_decrypt, aead\_encrypt, nonce\_for\_round} \\
+\code{python/pqbfl/protocol.py}              & 145--150 & \code{encrypt\_round\_message(model\_key, round\_num, direction, payload)} --- AAD = \code{"pqbfl:\{dir\}:\{round\}"}, calls \code{aead\_encrypt} \\
+\code{python/pqbfl/protocol.py}              & 152--159 & \code{decrypt\_round\_message(model\_key, round\_num, direction, ciphertext)} --- calls \code{aead\_decrypt} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 395     & \code{ct = encrypt\_round\_message(model\_key, round\_num=r, direction="S->C", payload=...)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 418     & \code{msg = decrypt\_round\_message(client\_model\_key, round\_num=r, direction="S->C", ...)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 440     & \code{ct\_u = encrypt\_round\_message(client\_model\_key, round\_num=r, direction="C->S", payload=...)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 455     & \code{decrypt\_round\_message(model\_key, round\_num=r, direction="C->S", ciphertext=ct\_u)} \\
+\end{longtable}
+
+% =================================================================
+\section{Key Derivation Functions}
+% =================================================================
+
+\subsection{3.1\quad HKDF (HMAC-based Extract-and-Expand)}
+
+\textbf{Definition file:} \code{python/pqbfl/crypto/kdf.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+6--48   & \code{\_kdf\_hashmod()} --- returns BLAKE3 hash class (preferred) or \code{hashlib.sha256} fallback \\
+53--55  & \code{hkdf\_extract(salt, ikm)} --- \code{HMAC(salt, ikm)} using chosen hash \\
+57--75  & \code{hkdf\_expand(prk, info, length)} --- HMAC-based $T(1) \| T(2) \| \ldots$ expansion \\
+77--87  & \code{kdf\_a\_root\_key(ss\_k, ss\_e)} --- \textbf{Asymmetric ratchet KDF\textsubscript{A}}: $\text{HKDF}(ss_k) \to \text{HKDF}(ss_e) \to \text{expand}(\text{"pqbfl:RK"})$ $\to$ 32-byte root key $RK_j$ \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{1.8cm} L{7cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/protocol.py} & 11      & Import: \code{kdf\_a\_root\_key} \\
+\code{python/pqbfl/protocol.py} & 70      & \code{kdf\_a\_root\_key(encap.shared\_secret, ss\_e)} in \code{client\_process\_server\_pubkeys()} \\
+\code{python/pqbfl/protocol.py} & 90--91  & \code{kdf\_a\_root\_key(ss\_k, ss\_e)} in \code{server\_finish\_session()} --- derives RK on server side \\
+\code{python/pqbfl/protocol.py} & 97      & \code{kdf\_a\_root\_key(encap.shared\_secret, ss\_e)} in \code{client\_finish\_session()} --- derives RK on client side \\
+\end{longtable}
+
+% -----------------------------------------------------------------
+\subsection{3.2\quad BLAKE3-256 / SHA-256 (Protocol Hashing)}
+
+\textbf{Definition file:} \code{python/pqbfl/utils.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+3       & \code{import hashlib} \\
+10--16  & \code{blake3\_256(data)} --- tries \code{from blake3 import blake3}, falls back to \code{hashlib.sha256} \\
+19--21  & \code{hash32(data)} --- protocol-wide 32-byte hash used everywhere \\
+24--26  & \code{sha256(data)} --- direct SHA-256 \\
+28--33  & \code{sha256\_hex()}, \code{sha256\_bytes32()}, \code{to\_bytes32\_hex()} --- Ethereum bytes32 helpers \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{1.8cm} L{7cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/crypto/aead.py}           & 7       & Import \code{hash32} --- used in \code{nonce\_for\_round()} \\
+\code{python/pqbfl/protocol.py}              & 12      & Import \code{hash32} \\
+\code{python/pqbfl/protocol.py}              & 47      & \code{hash32(kpk\_b + epk\_b)} --- \code{h\_server\_pubkeys()} \\
+\code{python/pqbfl/protocol.py}              & 65      & \code{hash32(kpk\_b + epk\_b)} --- verify \code{h\_pks} in \code{client\_process\_server\_pubkeys()} \\
+\code{python/pqbfl/protocol.py}              & 85      & \code{hash32(epk\_a)} --- verify \code{h\_epk\_a} in \code{server\_finish\_session()} \\
+\code{python/pqbfl/crypto/kyber.py}          & 104--110 & \code{sha256(...)} --- toy KEM fallback pseudo-random derivation \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 40      & Import \code{hash32} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 247     & \code{h\_pks = hash32(server\_keys.kem.public\_key + server\_keys.ecdh.public\_key\_bytes)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 248     & \code{h\_m0 = hash32(global\_model.to\_bytes())} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 367     & \code{h\_inf\_b = hash32(json\_dumps\_canonical(inf\_b).encode())} --- task hash \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 431     & \code{h\_inf\_a = hash32(json\_dumps\_canonical(inf\_a).encode())} --- update hash \\
+\end{longtable}
+
+% =================================================================
+\section{Side-Channel Resistance}
+% =================================================================
+
+\subsection{4.1\quad Boolean Masking (\texttt{mask\_bytes})}
+
+\textbf{Definition file:} \code{python/pqbfl/crypto/leakage.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+3--5    & \code{\_hw(x)} --- Hamming weight of an integer (\code{bin(x).count("1")}) \\
+7--14   & \code{simulate\_trace(data, noise\_std, jitter)} --- HW-based leakage model: $\text{trace}[i] = \text{HW}(\text{byte}[i]) + \mathcal{N}(0, \sigma^2)$, then \code{np.roll(trace, rand\_shift)} if jitter=True \\
+17--22  & \code{mask\_bytes(data)} --- \textbf{Boolean masking}: generates random mask $m \sim \mathcal{U}[0,255]^n$, $\text{share}_1 = \text{data} \oplus m$, $\text{share}_2 = m$ $\to$ no individual share leaks the secret \\
+24--26  & \code{combine\_shares(s1, s2)} --- reconstructs secret: $s_1 \oplus s_2$ \\
+28--37  & \code{apply\_defense(trace, mode)} --- \texttt{"masking"}: $+\mathcal{N}(0,0.5^2)$; \texttt{"noise"}: $+\mathcal{N}(0,2.0^2)$; \texttt{"adaptive"}: $+\mathcal{N}(0,2.5^2)$ + \code{np.roll} jitter \\
+\end{longtable}
+
+\textbf{Applied in (every crypto primitive):}
+
+\begin{longtable}{L{4.5cm} L{1.8cm} L{3.5cm} L{4cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Secret protected} & \textbf{Defense applied} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/crypto/kyber.py}  & 8       & imports all three & --- \\
+\code{python/pqbfl/crypto/kyber.py}  & 62--66  & \code{public\_key} during encap & simulate\_trace + apply\_defense \\
+\code{python/pqbfl/crypto/kyber.py}  & 81--91  & \code{secret\_key} during decap & mask\_bytes $\to$ simulate both shares $\to$ apply\_defense \\
+\code{python/pqbfl/crypto/ecdh.py}   & 9       & imports all three & --- \\
+\code{python/pqbfl/crypto/ecdh.py}   & 40--45  & SECP256K1 \code{priv\_bytes} & mask\_bytes $\to$ simulate $\to$ apply\_defense \\
+\code{python/pqbfl/crypto/ecdh.py}   & 70--77  & X25519 \code{priv\_bytes} & mask\_bytes $\to$ simulate $\to$ apply\_defense \\
+\code{python/pqbfl/crypto/eddsa.py}  & 10      & imports all three & --- \\
+\code{python/pqbfl/crypto/eddsa.py}  & 33--40  & Ed25519 \code{priv\_bytes} during sign & mask\_bytes $\to$ simulate $\to$ apply\_defense \\
+\code{python/pqbfl/crypto/aead.py}   & 5       & imports all three & --- \\
+\code{python/pqbfl/crypto/aead.py}   & 21--26  & AEAD \code{key32} during encrypt & mask\_bytes $\to$ simulate $\to$ apply\_defense \\
+\code{python/pqbfl/crypto/aead.py}   & 39--44  & AEAD \code{key32} during decrypt & mask\_bytes $\to$ simulate $\to$ apply\_defense \\
+\end{longtable}
+
+% =================================================================
+\section{Ratcheting --- Symmetric (KDF\textsubscript{S})}
+% =================================================================
+
+\textbf{Definition file:} \code{python/pqbfl/crypto/kdf.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+89--92  & \code{SymmetricRatchetState} dataclass (\code{chain\_key: bytes}, \code{index: int}) \\
+94--112 & \code{kdf\_s\_next(state)} --- derives next CK and model key: $CK_{i+1} = \text{HMAC}(CK_i, \text{"pqbfl:CK"})$, $MK_i = \text{HMAC}(CK_i, \text{"pqbfl:MK"})$ \\
+114--116 & \code{chain\_key\_from\_root(root\_key)} --- seeds first chain key: $CK_0 = \text{HMAC}(RK, \text{"pqbfl:CK0"})$ \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{2cm} L{6.8cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/protocol.py}              & 11      & Import: \code{SymmetricRatchetState, chain\_key\_from\_root, kdf\_s\_next} \\
+\code{python/pqbfl/protocol.py}              & 43--54  & \code{SessionState} holds \code{ratchet: SymmetricRatchetState}, \code{j} (epoch), \code{i} (step), \code{L\_j}, \code{adaptive\_L\_j} \\
+\code{python/pqbfl/protocol.py}              & 100--105 & \code{session\_from\_root(root\_key, L\_j)} --- calls \code{chain\_key\_from\_root(root\_key)} \\
+\code{python/pqbfl/protocol.py}              & 120--124 & \code{next\_model\_key(state)} --- calls \code{kdf\_s\_next(state.ratchet)}, increments \code{state.i} \\
+\code{python/pqbfl/protocol.py}              & 126--131 & \code{should\_asymmetric\_ratchet(state)} --- returns \code{state.i >= get\_effective\_L\_j(state)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 350--355 & \code{session\_from\_root(rk\_server, L\_j=initial\_L\_j)} per client after key exchange \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 388--391 & \code{server\_state, model\_key = next\_model\_key(server\_state)} --- per round per client \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 404--407 & \code{client\_state, client\_model\_key = next\_model\_key(client\_state)} --- then asserts equality \\
+\end{longtable}
+
+% =================================================================
+\section{Ratcheting --- Asymmetric (Adaptive)}
+% =================================================================
+
+\textbf{Definition file:} \code{python/pqbfl/adaptive/adaptive\_ratchet.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+30--36  & \code{RatchetAdjustment} frozen dataclass --- audit log entry (\code{timestamp, round\_num, old\_L\_j, new\_L\_j, threat\_level, reason}) \\
+38--65  & \code{AdaptiveRatchetPolicy} dataclass --- parameters: \code{L\_min}, \code{L\_max}, \code{L\_default}, \code{cooldown\_rounds}, \code{alpha}, \code{beta}, \code{gamma}, \code{N}, \code{C\_kem}, \code{E\_kem} \\
+75--89  & \code{compute\_L\_j(threat\_level)} --- \textbf{joint-optimization}: $L_j^* = \sqrt{\frac{N(\beta C_{\text{KEM}} + \gamma E_{\text{KEM}})}{\alpha \Theta_{\epsilon}(t)}}$ bounded to $[L_{\min}, L_{\max}]$ \\
+91--129 & \code{evaluate(threat\_level, round\_num)} --- cooldown-gated: only updates \code{\_current\_L\_j} if $|\text{round} - \text{last\_change}| \geq \text{cooldown\_rounds}$; appends to \code{\_adjustments} log \\
+131--160 & \code{should\_ratchet(i, L\_j, threat\_level)} --- uses $\min(\text{current}_{L_j},\ \text{compute}_{L_j}(\text{threat}))$ for conservative threshold \\
+\end{longtable}
+
+\textbf{Protocol glue in} \code{python/pqbfl/protocol.py}:
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+43--54  & \code{SessionState.adaptive\_L\_j: Optional[int]} --- hot-override field \\
+107--113 & \code{update\_L\_j(state, new\_L\_j)} --- sets \code{state.adaptive\_L\_j = max(1, new\_L\_j)} without re-keying \\
+115--118 & \code{get\_effective\_L\_j(state)} --- returns \code{adaptive\_L\_j} if set, else \code{L\_j} \\
+126--131 & \code{should\_asymmetric\_ratchet(state)} --- \code{state.i >= get\_effective\_L\_j(state)} \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{2cm} L{6.8cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 19      & Import: \code{AdaptiveRatchetPolicy} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 67--73  & \code{DemoConfig} fields: \code{adaptive\_enabled, L\_min, L\_max, L\_default, sensitivity} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 191--196 & \code{policy = AdaptiveRatchetPolicy(L\_min=..., L\_max=..., L\_default=..., sensitivity=...)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 348     & \code{\_inject\_simulated\_threats(monitor, r, rounds)} --- injects synthetic events at rounds 3, 4, mid \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 352     & \code{current\_L\_j = policy.evaluate(threat\_level, round\_num=r, reason=...)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 354--356 & \code{update\_L\_j(server\_sessions[addr]["state"], current\_L\_j)} \& same for client sessions \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 360--362 & \code{get\_effective\_L\_j(state)} --- stale-ratchet detection before \code{publish\_task} \\
+\end{longtable}
+
+% =================================================================
+\section{Threat Monitor}
+% =================================================================
+
+\textbf{Definition file:} \code{python/pqbfl/adaptive/threat\_monitor.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+27--34  & \code{ThreatEventType} str-Enum: \code{SIG\_VERIFICATION\_FAILED}, \code{HASH\_MISMATCH}, \code{REPUTATION\_DROP}, \code{TIMING\_ANOMALY}, \code{STALE\_RATCHET} \\
+36--41  & \code{\_DEFAULT\_WEIGHTS} --- per-type multipliers: SIG\_FAIL=1.0, HASH=0.9, REPUTATION=0.6, TIMING=0.4, STALE=0.3 \\
+43--52  & \code{ThreatEvent} frozen dataclass (\code{event\_type, severity, timestamp, round\_num, detail}) \\
+54--80  & \code{ThreatMonitor} dataclass --- \code{window\_seconds=300}, \code{decay\_half\_life=120}, per-type weights \\
+84--125 & \code{record\_event(type, severity, round\_num, detail)} --- appends \code{ThreatEvent} to \code{\_events} \\
+128--160 & \code{get\_threat\_level()} --- \textbf{exponential decay weighted average}: $\text{threat} = \frac{\sum \text{decay} \times w \times \text{sev}}{\sum \text{decay} \times w}$ where $\text{decay} = 2^{-\text{age}/t_{1/2}}$ \\
+162--170 & \code{get\_recent\_events(limit)} --- sliding-window event list \\
+172--185 & \code{get\_event\_log()} --- serialisable dict list for UI/JSON \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{2cm} L{6.8cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 20      & Import: \code{ThreatEventType, ThreatMonitor} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 135--148 & \code{\_inject\_simulated\_threats()} --- round 3: \code{SIG\_FAIL} sev=0.95; round 4: \code{TIMING\_ANOMALY} sev=0.7; round mid: \code{REPUTATION\_DROP} sev=0.5 \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 191     & \code{monitor = ThreatMonitor()} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 350     & \code{threat\_level = monitor.get\_threat\_level()} --- queried each round \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 362     & \code{monitor.record\_event(ThreatEventType.STALE\_RATCHET, severity=0.3, ...)} --- when \code{i >= effective\_L\_j} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 415     & \code{monitor.record\_event(ThreatEventType.SIG\_VERIFICATION\_FAILED, severity=1.0, ...)} --- server sig failure \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 448     & \code{monitor.record\_event(ThreatEventType.SIG\_VERIFICATION\_FAILED, severity=1.0, ...)} --- client sig failure \\
+\end{longtable}
+
+% =================================================================
+\section{Blockchain --- Smart Contract (\texttt{PQBFL.sol})}
+% =================================================================
+
+\textbf{Definition file:} \code{chain/contracts/PQBFL.sol}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What / Algorithm} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+1       & \code{pragma solidity \^{}0.8.20} \\
+5       & \code{MIN\_DEPOSIT\_WEI = 0.01 ether} --- economic security parameter \\
+7--18   & \code{Project} struct: \code{id, server, nClients, clientCount, hInitialModel (bytes32), hServerKeys (bytes32), done, createdAt} \\
+20--29  & \code{Client} struct: \code{addr, projectId, hEpk (bytes32), score, registeredAt} \\
+31--43  & \code{Task} struct: \code{round, taskId, projectId, server, hInf (bytes32), hPks (bytes32), deadline} \\
+45--55  & \code{Update} struct: \code{round, taskId, projectId, client, hInf (bytes32), hCtEpk (bytes32), submittedAt} \\
+57--69  & \code{Feedback} struct: \code{round, taskId, projectId, client, hUpdateInf, hPks, scoreDelta (int256), terminate, time} \\
+71--77  & Events: \code{RegClient, RegProject, TaskEvent, UpdateEvent, FeedbackEvent, ProjectTerminate} \\
+78--82  & \code{onlyServer(projectId)} modifier --- access control \\
+84--101 & \code{registerProject(id\_p, nClients, h\_M0, h\_pks)} payable --- requires $\geq$ MIN\_DEPOSIT \\
+103--122 & \code{registerClient(h\_epk, id\_p)} --- stores \code{h\_epk} on-chain for session binding \\
+124--143 & \code{publishTask(r, h\_Inf\_b, h\_pks\_r, id\_t, id\_p, D\_t)} --- commits task hash + server key hash \\
+145--165 & \code{updateModel(r, h\_Inf\_a, h\_ct\_epk, id\_t, id\_p)} --- commits model update hash \\
+167--200+ & \code{feedbackModel(r, id\_t, id\_p, cAddr, h\_Inf\_a, h\_pks\_r, sc, T)} --- updates client score, emits feedback/terminate \\
+\end{longtable}
+
+\textbf{Compiled and deployed by:}
+
+\begin{longtable}{L{4.5cm} L{1.8cm} L{8cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{What} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{chain/hardhat.config.js} & 1--14 & Hardhat config: Solidity 0.8.20, optimizer runs=200, localhost:8545 \\
+\code{chain/scripts/deploy.js} & 1--11 & \code{ethers.getContractFactory("PQBFL")} $\to$ deploy $\to$ log address \\
+\end{longtable}
+
+% =================================================================
+\section{Blockchain --- Web3 / Contract Client}
+% =================================================================
+
+\textbf{Definition file:} \code{python/pqbfl/chain/contract\_client.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+8       & \code{from web3 import Web3} \\
+11--13  & \code{PQBFLArtifact} dataclass (\code{abi}, \code{bytecode}) \\
+15--26  & \code{load\_hardhat\_artifact(chain\_dir)} --- reads \code{artifacts/contracts/PQBFL.sol/PQBFL.json} \\
+29--44  & \code{PQBFLContractClient} class --- wraps \code{w3.eth.contract} \\
+36--42  & \code{deploy\_from\_artifact(w3, artifact, deployer)} --- \code{constructor().transact()} $\to$ \code{wait\_for\_transaction\_receipt} \\
+44--49  & \code{register\_project(...)} --- calls \code{registerProject()} with ETH deposit \\
+51--53  & \code{register\_client(...)} --- calls \code{registerClient()} \\
+55--60  & \code{publish\_task(...)} --- calls \code{publishTask()} \\
+62--66  & \code{update\_model(...)} --- calls \code{updateModel()} \\
+68--82  & \code{feedback\_model(...)} --- calls \code{feedbackModel()} \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{1.8cm} L{7cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 23      & Import: \code{PQBFLContractClient, load\_hardhat\_artifact} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 154     & \code{w3 = Web3(Web3.HTTPProvider(cfg.chain\_url))} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 155     & \code{w3.is\_connected()} check \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 219     & \code{artifact = load\_hardhat\_artifact(chain\_dir)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 222     & \code{contract = PQBFLContractClient.deploy\_from\_artifact(w3, artifact, ...)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 254     & \code{contract.register\_project(id\_p, n\_clients, h\_m0, h\_pks, deposit\_wei)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 267     & \code{contract.register\_client(h\_epk=h\_epk\_a, id\_p=id\_p)} per client \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 371     & \code{contract.publish\_task(r, h\_inf\_b, h\_pks\_r, id\_t, id\_p, deadline)} per round \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 431     & \code{contract.update\_model(r, h\_inf\_a, h\_ct\_epk=0x00*32, id\_t, id\_p)} per client \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 457     & \code{contract.feedback\_model(r, id\_t, id\_p, client\_addr, h\_inf\_a, h\_pks\_r, score\_delta, terminate)} \\
+\end{longtable}
+
+% =================================================================
+\section{Blockchain --- HD Wallet / Accounts}
+% =================================================================
+
+\textbf{Definition file:} \code{python/pqbfl/chain/hardhat\_accounts.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What / Algorithm} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+5       & \code{from eth\_account import Account} \\
+8       & \code{HARDHAT\_DEFAULT\_MNEMONIC = "test test test \ldots{} junk"} --- BIP-39 mnemonic \\
+12--15  & \code{HardhatAccount} frozen dataclass (\code{index, address, private\_key\_hex}) \\
+17--23  & \code{derive\_hardhat\_account(index)} --- \textbf{BIP-44 HD derivation}: \code{m/44'/60'/0'/0/\{index\}} via \code{Account.from\_mnemonic()} \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{1.8cm} L{7cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 24  & Import: \code{derive\_hardhat\_account} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 157 & \code{server\_acct = derive\_hardhat\_account(0)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 159 & \code{client\_accts = [derive\_hardhat\_account(i) for i in range(1, 1 + n\_clients)]} \\
+\end{longtable}
+
+% =================================================================
+\section{Blockchain --- Ethereum Message Signing}
+% =================================================================
+
+\textbf{Definition file:} \code{python/pqbfl/crypto/ethsig.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What / Algorithm} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+4       & \code{from eth\_account import Account} \\
+5       & \code{from eth\_account.messages import encode\_defunct} \\
+8--11   & \code{EthIdentity} frozen dataclass (\code{address, private\_key\_hex}) \\
+13--15  & \code{sign\_bytes(private\_key\_hex, message)} --- \code{Account.sign\_message(encode\_defunct(msg))} \\
+18--19  & \code{recover\_signer(message, signature)} --- \code{Account.recover\_message(...)} \\
+\end{longtable}
+
+\textit{Note:} \code{ethsig.py} is defined but not called in the main demo flow (off-chain Ed25519 is used instead). It is available for direct on-chain Ethereum identity binding.
+
+% =================================================================
+\section{Federated Learning --- Model}
+% =================================================================
+
+\textbf{Definition file:} \code{python/pqbfl/fl/model.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What / Algorithm} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+8--11   & \code{LogisticModel} dataclass (\code{w: ndarray}, \code{b: float}) \\
+13--18  & \code{LogisticModel.init(d, seed)} --- \code{rng.normal(scale=0.01)} weight init \\
+20--21  & \code{copy()} --- deep copy \\
+24--31  & \code{predict\_proba(x)} --- \textbf{sigmoid}: $\sigma(\mathbf{x} \cdot \mathbf{w} + b)$, clipped to $\pm 50$ \\
+33--34  & \code{predict(x)} --- binary threshold at 0.5 \\
+36--64  & \code{train\_sgd(x, y, lr, epochs, batch\_size, l2, seed)} --- \textbf{mini-batch SGD} with optional \textbf{L2 regularization}: $\nabla w \mathrel{+}= \lambda \cdot w$ \\
+66--72  & \code{to\_bytes()} / \code{from\_bytes()} --- \code{numpy.savez} / \code{numpy.load} serialization for encrypted transport \\
+74--76  & \code{accuracy(model, x, y)} --- $\text{mean}(\hat{y} = y)$ \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{2cm} L{6.8cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/fl/aggregator.py}          & 4       & Import: \code{LogisticModel} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 30      & Import: \code{LogisticModel, accuracy} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 248     & \code{global\_model = LogisticModel.init(d, seed=cfg.model\_seed)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 418     & \code{received\_model = LogisticModel.from\_bytes(msg["M"])} --- client deserializes decrypted model \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 419     & \code{local\_model = received\_model.copy()} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 422--432 & \code{local\_model.train\_sgd(ds.x, y\_train, lr, epochs, batch\_size, l2, seed)} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 466--469 & \code{accuracy(global\_model, dataset.x\_test, dataset.y\_test)} appended per round \\
+\end{longtable}
+
+% =================================================================
+\section{Federated Learning --- Aggregators}
+% =================================================================
+
+\textbf{Definition file:} \code{python/pqbfl/fl/aggregator.py}
+
+\subsection{FedAvg}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+7--30 & \code{fedavg(models: list[(LogisticModel, int)])} --- \textbf{weighted average}: $\mathbf{w}_\text{new} = \sum_i \frac{n_i}{N} \mathbf{w}_i$,\quad $b_\text{new} = \sum_i \frac{n_i}{N} b_i$ \\
+\end{longtable}
+
+\subsection{Coordinate Median}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+32--54 & \code{coord\_median(models)} --- \textbf{unweighted coordinate-wise median}: \code{np.median(w\_stack, axis=0)} --- robust against Byzantine clients \\
+\end{longtable}
+
+\subsection{Trimmed Mean}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What happens} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+56--95 & \code{trimmed\_mean(models, trim\_ratio=0.1)} --- sorts per-coordinate, trims $k = \lfloor \text{ratio} \times n \rfloor$ from top and bottom, then computes mean --- \textbf{Byzantine-robust} \\
+\end{longtable}
+
+\textbf{Used in:}
+
+\begin{longtable}{L{5.5cm} L{1.8cm} L{7cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{Usage} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 29  & Import: \code{coord\_median, fedavg, trimmed\_mean} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 464 & \code{global\_model = coord\_median(local\_updates)} if \code{cfg.aggregator == "median"} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 466 & \code{global\_model = trimmed\_mean(local\_updates, trim\_ratio=cfg.trim\_ratio)} if \code{"trimmed\_mean"} \\
+\code{python/pqbfl/scripts/demo\_end\_to\_end.py} & 468 & \code{global\_model = fedavg(local\_updates)} default \\
+\end{longtable}
+
+% =================================================================
+\section{Federated Learning --- Dataset}
+% =================================================================
+
+\textbf{Definition file:} \code{python/pqbfl/fl/data.py}
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What / Algorithm} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+8--10   & \code{ClientDataset} frozen dataclass (\code{x, y}) \\
+12--14  & \code{FederatedDataset} frozen dataclass (\code{clients: list[ClientDataset], x\_test, y\_test}) \\
+18--50  & \code{dict\_2classes} --- 34-class $\to$ binary label map (CIC-IoT-2023 dataset) \\
+52--57  & \code{X\_columns} --- 46 numeric network flow features \\
+59--120 & \code{load\_and\_preprocess\_dataset(csv\_path, n\_clients, seed)}: \code{pd.read\_csv} $\to$ binary label map $\to$ \code{StandardScaler.fit\_transform} $\to$ \code{train\_test\_split(stratify=y, test\_size=0.2)} $\to$ equal random partition among clients \\
+\end{longtable}
+
+\textbf{Also (synthetic path) in} \code{demo\_end\_to\_end.py}:
+
+\begin{longtable}{L{2.2cm} L{11.5cm}}
+\toprule
+\textbf{Line(s)} & \textbf{What} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+261--280 & \code{make\_classification(n\_samples=1000, n\_features=20, n\_informative=15)} $\to$ manual 80/20 split $\to$ equal client partition (no scaler for synthetic path) \\
+\end{longtable}
+
+% =================================================================
+\section{Frameworks \& Dependencies}
+% =================================================================
+
+\textbf{Definition file:} \code{python/requirements.txt}
+
+\begin{longtable}{L{2.8cm} L{1.8cm} L{4.5cm} L{5.2cm}}
+\toprule
+\textbf{Library} & \textbf{Version} & \textbf{Where used} & \textbf{Key purpose} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{cryptography} & none & \code{ecdh.py}, \code{eddsa.py}, \code{aead.py} & X25519, Ed25519, ChaCha20-Poly1305, SECP256K1 \\
+\code{numpy}        & none & \code{leakage.py}, \code{ecdh.py}, \code{eddsa.py}, \code{kyber.py}, \code{aead.py}, \code{model.py}, \code{aggregator.py}, \code{data.py} & trace arrays, model weights, data arrays \\
+\code{pqcrypto}     & none & \code{kyber.py} L14--22 & ML-KEM-512 / Kyber512 (PQ KEM) \\
+\code{web3}         & none & \code{contract\_client.py}, \code{demo\_end\_to\_end.py} & Ethereum RPC, contract deploy \& calls \\
+\code{eth-account}  & none & \code{hardhat\_accounts.py}, \code{ethsig.py} & BIP-44 HD wallet, Eth signing/recovery \\
+\code{streamlit}    & none & \code{ui\_app.py} & Web UI (sliders, charts) \\
+\code{pandas}       & none & \code{fl/data.py} L2 & CSV loading, DataFrame ops \\
+\code{altair}       & none & \code{ui\_app.py} & Vega-Altair charts in Streamlit \\
+\code{blake3}       & none & \code{utils.py} L11, \code{kdf.py} L8 & BLAKE3-256 hashing (KDF + hash32) \\
+\code{sklearn}      & none & \code{fl/data.py} L4--5, \code{demo\_end\_to\_end.py} L261 & StandardScaler, train\_test\_split, make\_classification \\
+\end{longtable}
+
+% =================================================================
+\section{Infrastructure / DevOps}
+% =================================================================
+
+\subsection{Hardhat (Local Ethereum Node)}
+
+\begin{longtable}{L{4.5cm} L{1.8cm} L{8cm}}
+\toprule
+\textbf{File} & \textbf{Line(s)} & \textbf{What} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{chain/hardhat.config.js} & 1      & \code{require("@nomicfoundation/hardhat-ethers")} \\
+\code{chain/hardhat.config.js} & 4--6   & Solidity 0.8.20, optimizer enabled, runs=200 \\
+\code{chain/hardhat.config.js} & 10--12 & \code{localhost} network: \code{http://127.0.0.1:8545} (env override via \code{HARDHAT\_LOCALHOST\_URL}) \\
+\code{chain/package.json}      & ---    & \code{@nomicfoundation/hardhat-ethers}, \code{hardhat}, \code{ethers} devDependencies \\
+\code{chain/scripts/deploy.js} & 1--11  & \code{ethers.getContractFactory("PQBFL")} $\to$ \code{.deploy()} $\to$ log deployed address \\
+\end{longtable}
+
+\subsection{Docker}
+
+\begin{longtable}{L{5.5cm} L{9cm}}
+\toprule
+\textbf{File} & \textbf{What} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\code{docker/Dockerfile.chain}     & Node.js image: installs Hardhat deps, runs \code{npx hardhat node} \\
+\code{docker/Dockerfile.python}    & Python image: installs \code{requirements.txt}, runs Streamlit UI \\
+\code{docker/docker-compose.yml}   & Starts \code{chain} (port 9545) + \code{python} (port 9501) services \\
+\code{docker/docker-up.sh}         & \code{docker compose up --build -d} \\
+\code{docker/docker-down.sh}       & \code{docker compose down -v} \\
+\end{longtable}
+
+\vfill
+\begin{center}
+\small\itshape Generated from source inspection of \texttt{pqbfl\_project new adaptive side channel resistant} --- May 2026
+\end{center}
+
+\end{document}
